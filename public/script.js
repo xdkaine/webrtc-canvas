@@ -1270,6 +1270,14 @@ class OptimizedCollaborativeCanvas {
             cursorDot.style.opacity = data.isDrawing ? '0.8' : '0.5';
         }
         
+        // Update cursor label if nickname has changed
+        if (data.nickname) {
+            const cursorLabel = cursor.querySelector('.cursor-label');
+            if (cursorLabel && cursorLabel.textContent !== data.nickname) {
+                cursorLabel.textContent = data.nickname;
+            }
+        }
+        
         // Hide cursor after inactivity
         clearTimeout(cursor.hideTimeout);
         cursor.hideTimeout = setTimeout(() => {
