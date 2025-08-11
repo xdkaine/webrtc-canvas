@@ -102,7 +102,7 @@ copyLink.addEventListener('click', async () => {
 let ws; let clientId;
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}`);
+  ws = new WebSocket(`${proto}://${location.host}/api/ws`);
   ws.onopen = () => { if (roomId) ws.send(JSON.stringify({ type: 'join', roomId })); };
   ws.onmessage = (ev) => handleSignal(JSON.parse(ev.data));
   ws.onclose = () => setStatus('Disconnected');
