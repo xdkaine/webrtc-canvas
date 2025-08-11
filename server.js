@@ -494,12 +494,28 @@ app.get('/api/metrics', (req, res) => {
     });
 });
 
+// SEO and PWA routes
+app.get('/robots.txt', (req, res) => {
+    res.type('text/plain');
+    res.sendFile(path.join(__dirname, 'public', 'robots.txt'));
+});
+
+app.get('/sitemap.xml', (req, res) => {
+    res.type('application/xml');
+    res.sendFile(path.join(__dirname, 'public', 'sitemap.xml'));
+});
+
+app.get('/site.webmanifest', (req, res) => {
+    res.type('application/manifest+json');
+    res.sendFile(path.join(__dirname, 'public', 'site.webmanifest'));
+});
+
 // Serve the main page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3003;
 
 // Start server with WebSocket support
 if (!process.env.VERCEL) {
