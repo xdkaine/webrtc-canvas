@@ -1,49 +1,43 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Live Collab Draw</title>
-  <link rel="stylesheet" href="/styles.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Collaborative Canvas</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <div class="brand">Collab Draw</div>
-    <div class="controls">
-      <input id="room" placeholder="room id" />
-      <button id="join">Join</button>
-      <span id="me"></span>
+    <div class="container">
+        <header>
+            <h1>🎨 Collaborative Canvas</h1>
+            <div class="controls">
+                <div class="color-picker">
+                    <label for="colorPicker">Color:</label>
+                    <input type="color" id="colorPicker" value="#000000">
+                </div>
+                <div class="brush-size">
+                    <label for="brushSize">Size:</label>
+                    <input type="range" id="brushSize" min="1" max="50" value="5">
+                    <span id="sizeDisplay">5</span>px
+                </div>
+                <button id="clearCanvas">Clear Canvas</button>
+                <div class="connection-status">
+                    <span id="connectionStatus">Connecting...</span>
+                    <span id="userCount">0 users online</span>
+                </div>
+            </div>
+        </header>
+        
+        <main>
+            <canvas id="drawingCanvas" width="1200" height="600"></canvas>
+        </main>
+        
+        <div class="info">
+            <p>Draw on the canvas and see others draw in real-time!</p>
+        </div>
     </div>
-  </header>
 
-  <main>
-    <aside class="tools">
-      <label>
-        Color
-        <input type="color" id="color" value="#ff4757" />
-      </label>
-      <label>
-        Size
-        <input type="range" id="size" min="1" max="40" value="6" />
-      </label>
-      <button id="clear">Clear</button>
-      <div class="status" id="status">Idle</div>
-      <div class="peers" id="peers"></div>
-      <div class="share">
-        <input id="shareLink" readonly />
-        <button id="copyLink">Copy Link</button>
-      </div>
-    </aside>
-
-    <section class="stage">
-      <canvas id="canvas"></canvas>
-    </section>
-  </main>
-
-  <footer>
-    Built with WebRTC + WebSocket signaling. No logins, just rooms.
-  </footer>
-
-  <script type="module" src="/main.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>

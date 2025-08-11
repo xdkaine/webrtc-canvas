@@ -1,15 +1,20 @@
 {
-  "name": "gpt5-webrtc-draw",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
+  "name": "webrtc-canvas",
+  "version": "1.0.0",
+  "description": "A collaborative drawing canvas using WebRTC",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "nodemon server.js"
   },
+  "keywords": ["webrtc", "canvas", "collaborative", "drawing"],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
-    "ws": "^8.14.2",
-    "nanoid": "^5.0.4"
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   }
 }
