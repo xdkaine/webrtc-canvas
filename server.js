@@ -515,7 +515,7 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-const PORT = process.env.PORT || 3003;
+const PORT = 3003;
 
 // Start server with WebSocket support
 if (!process.env.VERCEL) {
