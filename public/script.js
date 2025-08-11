@@ -39,7 +39,7 @@ class OptimizedCollaborativeCanvas {
         
         // Drawing state
         this.isDrawing = false;
-        this.currentColor = '#000000'; // Black should be visible on white canvas
+        this.currentColor = '#ffffff'; // White should be visible on dark canvas
         this.currentSize = 5;
         this.currentPath = [];
         
