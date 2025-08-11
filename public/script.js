@@ -9,12 +9,32 @@ class CollaborativeCanvas {
         this.currentColor = '#000000';
         this.currentSize = 5;
         this.userId = this.generateUserId();
+        this.nickname = this.getUserNickname();
         this.sessionId = 'default';
         this.lastSignalCheck = 0;
         this.lastDrawingCheck = 0;
         
+        // Drawing path management
+        this.currentPath = [];
+        this.drawingBuffer = [];
+        this.lastSentTime = 0;
+        
+        // Canvas dimensions for coordinate normalization
+        this.canvasWidth = 800;
+        this.canvasHeight = 600;
+        
+        // User management
+        this.connectedUsers = new Map();
+        this.remoteCursors = new Map();
+        
+        // Chat management
+        this.chatMessages = [];
+        this.chatBuffer = [];
+        
         this.initializeCanvas();
         this.initializeControls();
+        this.initializeUserInterface();
+        this.initializeChat();
         this.initializeWebRTC();
         this.joinSession();
         this.startPolling();
@@ -22,6 +42,114 @@ class CollaborativeCanvas {
 
     generateUserId() {
         return 'user_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    getUserNickname() {
+        // Check if user has a saved nickname
+        let nickname = localStorage.getItem('canvas_nickname');
+        if (!nickname) {
+            // Show custom nickname modal instead of browser prompt
+            this.showNicknameModal();
+            return 'Anonymous'; // Temporary until modal completes
+        }
+        return nickname;
+    }
+
+    showNicknameModal() {
+        // Create modal overlay
+        const modalOverlay = document.createElement('div');
+        modalOverlay.id = 'nicknameModal';
+        modalOverlay.className = 'modal-overlay';
+        modalOverlay.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Welcome to Collaborative Canvas!</h3>
+                    <p>Enter your nickname to get started</p>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="nicknameInput" class="nickname-input" 
+                           placeholder="Your nickname (optional)" maxlength="20" autocomplete="off">
+                    <p class="modal-hint">Leave empty to remain anonymous</p>
+                </div>
+                <div class="modal-footer">
+                    <button id="nicknameCancel" class="btn-secondary">Stay Anonymous</button>
+                    <button id="nicknameConfirm" class="btn-primary">Join Canvas</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modalOverlay);
+        
+        // Focus the input
+        const input = document.getElementById('nicknameInput');
+        input.focus();
+        
+        // Handle form submission
+        const handleSubmit = () => {
+            const inputValue = input.value.trim();
+            let finalNickname = 'Anonymous';
+            
+            if (inputValue !== '') {
+                // Sanitize nickname for XSS protection
+                finalNickname = this.sanitizeInput(inputValue);
+                finalNickname = finalNickname.substring(0, 20); // Limit length
+            }
+            
+            this.nickname = finalNickname;
+            localStorage.setItem('canvas_nickname', finalNickname);
+            
+            // Update UI
+            const nicknameDisplay = document.getElementById('currentNickname');
+            if (nicknameDisplay) {
+                nicknameDisplay.textContent = finalNickname;
+            }
+            
+            // Remove modal
+            modalOverlay.remove();
+            
+            // Broadcast updated user info
+            this.broadcastUserInfo();
+        };
+        
+        // Event listeners
+        document.getElementById('nicknameConfirm').addEventListener('click', handleSubmit);
+        document.getElementById('nicknameCancel').addEventListener('click', () => {
+            this.nickname = 'Anonymous';
+            localStorage.setItem('canvas_nickname', 'Anonymous');
+            
+            const nicknameDisplay = document.getElementById('currentNickname');
+            if (nicknameDisplay) {
+                nicknameDisplay.textContent = 'Anonymous';
+            }
+            
+            modalOverlay.remove();
+            this.broadcastUserInfo();
+        });
+        
+        // Handle Enter key
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleSubmit();
+            }
+        });
+        
+        // Handle Escape key
+        document.addEventListener('keydown', function escapeHandler(e) {
+            if (e.key === 'Escape') {
+                document.getElementById('nicknameCancel').click();
+                document.removeEventListener('keydown', escapeHandler);
+            }
+        });
+    }
+
+    sanitizeInput(input) {
+        // Basic XSS protection - remove HTML tags and escape special characters
+        return input
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#x27;')
+            .replace(/\//g, '&#x2F;');
     }
 
     async joinSession() {
@@ -53,11 +181,14 @@ class CollaborativeCanvas {
         // Poll for signals every 1 second
         setInterval(() => this.pollForSignals(), 1000);
         
-        // Poll for drawing updates every 500ms
-        setInterval(() => this.pollForDrawingUpdates(), 500);
+        // Poll for drawing updates every 100ms for better responsiveness
+        setInterval(() => this.pollForDrawingUpdates(), 100);
         
         // Update session info every 5 seconds
         setInterval(() => this.updateSessionInfo(), 5000);
+        
+        // Send drawing buffer every 50ms for smooth real-time drawing
+        setInterval(() => this.flushDrawingBuffer(), 50);
     }
 
     async pollForSignals() {
@@ -113,13 +244,20 @@ class CollaborativeCanvas {
     }
 
     initializeCanvas() {
-        // Set up canvas for drawing
+        // Set fixed canvas dimensions for consistent coordinate system
+        this.canvas.width = this.canvasWidth;
+        this.canvas.height = this.canvasHeight;
+        
+        // Set up canvas for drawing with consistent properties
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         
         // Mouse events
         this.canvas.addEventListener('mousedown', (e) => this.startDrawing(e));
-        this.canvas.addEventListener('mousemove', (e) => this.draw(e));
+        this.canvas.addEventListener('mousemove', (e) => {
+            this.draw(e);
+            this.sendCursorPosition(e);
+        });
         this.canvas.addEventListener('mouseup', () => this.stopDrawing());
         this.canvas.addEventListener('mouseout', () => this.stopDrawing());
         
@@ -403,14 +541,172 @@ class CollaborativeCanvas {
 
         clearButton.addEventListener('click', () => {
             this.clearCanvas();
-            this.broadcastDrawing({
+            const clearData = {
                 type: 'clear',
-                userId: this.userId
-            });
+                userId: this.userId,
+                timestamp: Date.now()
+            };
+            this.broadcastDrawing(clearData);
         });
 
         // initialize preview
         this.updatePreview(previewDot);
+    }
+
+    initializeUserInterface() {
+        // Create users panel if it doesn't exist
+        if (!document.getElementById('usersPanel')) {
+            this.createUsersPanel();
+        }
+        
+        // Create cursors container
+        if (!document.getElementById('cursorsContainer')) {
+            this.createCursorsContainer();
+        }
+        
+        // Add nickname change functionality
+        const nicknameBtn = document.getElementById('changeNickname');
+        if (nicknameBtn) {
+            nicknameBtn.addEventListener('click', () => this.changeNickname());
+        }
+    }
+
+    createUsersPanel() {
+        const usersPanel = document.createElement('div');
+        usersPanel.id = 'usersPanel';
+        usersPanel.className = 'users-panel';
+        usersPanel.innerHTML = `
+            <h3>Connected Users</h3>
+            <div id="usersList"></div>
+            <div class="nickname-section">
+                <span>You: <strong id="currentNickname">${this.nickname}</strong></span>
+                <button id="changeNickname" class="btn-small">Change</button>
+            </div>
+        `;
+        document.body.appendChild(usersPanel);
+    }
+
+    createCursorsContainer() {
+        const cursorsContainer = document.createElement('div');
+        cursorsContainer.id = 'cursorsContainer';
+        cursorsContainer.className = 'cursors-container';
+        cursorsContainer.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        `;
+        document.body.appendChild(cursorsContainer);
+    }
+
+    changeNickname() {
+        this.showChangeNicknameModal();
+    }
+
+    showChangeNicknameModal() {
+        // Create modal overlay
+        const modalOverlay = document.createElement('div');
+        modalOverlay.id = 'changeNicknameModal';
+        modalOverlay.className = 'modal-overlay';
+        modalOverlay.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Change Nickname</h3>
+                    <p>Update your display name</p>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="changeNicknameInput" class="nickname-input" 
+                           placeholder="Your nickname" value="${this.nickname}" maxlength="20" autocomplete="off">
+                    <p class="modal-hint">Leave empty to become anonymous</p>
+                </div>
+                <div class="modal-footer">
+                    <button id="changeNicknameCancel" class="btn-secondary">Cancel</button>
+                    <button id="changeNicknameConfirm" class="btn-primary">Update</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modalOverlay);
+        
+        // Focus the input and select existing text
+        const input = document.getElementById('changeNicknameInput');
+        input.focus();
+        input.select();
+        
+        // Handle form submission
+        const handleSubmit = () => {
+            const inputValue = input.value.trim();
+            let finalNickname = 'Anonymous';
+            
+            if (inputValue !== '') {
+                finalNickname = this.sanitizeInput(inputValue).substring(0, 20);
+            }
+            
+            this.nickname = finalNickname;
+            localStorage.setItem('canvas_nickname', finalNickname);
+            
+            // Update UI
+            const nicknameDisplay = document.getElementById('currentNickname');
+            if (nicknameDisplay) {
+                nicknameDisplay.textContent = finalNickname;
+            }
+            
+            // Remove modal
+            modalOverlay.remove();
+            
+            // Broadcast nickname change
+            this.broadcastUserInfo();
+        };
+        
+        // Event listeners
+        document.getElementById('changeNicknameConfirm').addEventListener('click', handleSubmit);
+        document.getElementById('changeNicknameCancel').addEventListener('click', () => {
+            modalOverlay.remove();
+        });
+        
+        // Handle Enter key
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleSubmit();
+            }
+        });
+        
+        // Handle Escape key
+        document.addEventListener('keydown', function escapeHandler(e) {
+            if (e.key === 'Escape') {
+                modalOverlay.remove();
+                document.removeEventListener('keydown', escapeHandler);
+            }
+        });
+        
+        // Close on overlay click
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay) {
+                modalOverlay.remove();
+            }
+        });
+    }
+
+    broadcastUserInfo() {
+        const userInfo = {
+            type: 'user-info',
+            userId: this.userId,
+            nickname: this.nickname,
+            timestamp: Date.now()
+        };
+        
+        this.dataChannels.forEach((channel) => {
+            if (channel.readyState === 'open') {
+                try {
+                    channel.send(JSON.stringify(userInfo));
+                } catch (error) {
+                    console.error('Error sending user info:', error);
+                }
+            }
+        });
     }
 
     updatePreview(previewDot) {
@@ -420,6 +716,105 @@ class CollaborativeCanvas {
         previewDot.style.height = `${size}px`;
         previewDot.style.background = this.currentColor;
         previewDot.style.borderColor = this.currentColor.toLowerCase() === '#ffffff' ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.9)';
+    }
+
+    initializeChat() {
+        // Create chat panel if it doesn't exist
+        if (!document.getElementById('chatPanel')) {
+            this.createChatPanel();
+        }
+        
+        const chatInput = document.getElementById('chatInput');
+        const sendButton = document.getElementById('sendMessage');
+        
+        if (chatInput && sendButton) {
+            // Handle send button click
+            sendButton.addEventListener('click', () => this.sendChatMessage());
+            
+            // Handle Enter key
+            chatInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.sendChatMessage();
+                }
+            });
+        }
+    }
+
+    createChatPanel() {
+        const chatPanel = document.createElement('div');
+        chatPanel.id = 'chatPanel';
+        chatPanel.className = 'chat-panel';
+        chatPanel.innerHTML = `
+            <h3>Chat</h3>
+            <div id="chatMessages" class="chat-messages"></div>
+            <div class="chat-input-container">
+                <input type="text" id="chatInput" placeholder="Type a message..." maxlength="200">
+                <button id="sendMessage" class="btn-small">Send</button>
+            </div>
+        `;
+        document.body.appendChild(chatPanel);
+    }
+
+    sendChatMessage() {
+        const chatInput = document.getElementById('chatInput');
+        if (!chatInput) return;
+        
+        const message = chatInput.value.trim();
+        if (message === '') return;
+        
+        // Sanitize message for XSS protection
+        const sanitizedMessage = this.sanitizeInput(message);
+        
+        const chatData = {
+            type: 'chat-message',
+            userId: this.userId,
+            nickname: this.nickname,
+            message: sanitizedMessage,
+            timestamp: Date.now()
+        };
+        
+        // Add to local chat
+        this.addChatMessage(chatData);
+        
+        // Broadcast to other users
+        this.dataChannels.forEach((channel) => {
+            if (channel.readyState === 'open') {
+                try {
+                    channel.send(JSON.stringify(chatData));
+                } catch (error) {
+                    console.error('Error sending chat message:', error);
+                }
+            }
+        });
+        
+        // Clear input
+        chatInput.value = '';
+    }
+
+    addChatMessage(data) {
+        const chatMessages = document.getElementById('chatMessages');
+        if (!chatMessages) return;
+        
+        const messageElement = document.createElement('div');
+        messageElement.className = 'chat-message';
+        
+        const time = new Date(data.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        const isOwnMessage = data.userId === this.userId;
+        
+        messageElement.innerHTML = `
+            <span class="chat-time">${time}</span>
+            <span class="chat-nickname ${isOwnMessage ? 'own-message' : ''}">${data.nickname}:</span>
+            <span class="chat-text">${data.message}</span>
+        `;
+        
+        chatMessages.appendChild(messageElement);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        // Keep only last 50 messages
+        while (chatMessages.children.length > 50) {
+            chatMessages.removeChild(chatMessages.firstChild);
+        }
     }
 
     initializeWebRTC() {
@@ -515,16 +910,88 @@ class CollaborativeCanvas {
         
         dataChannel.onopen = () => {
             console.log(`Data channel opened with ${userId}`);
+            
+            // Send user info to the new peer
+            const userInfo = {
+                type: 'user-info',
+                userId: this.userId,
+                nickname: this.nickname,
+                timestamp: Date.now()
+            };
+            
+            try {
+                dataChannel.send(JSON.stringify(userInfo));
+            } catch (error) {
+                console.error('Error sending user info:', error);
+            }
+            
+            // Request canvas state from the new peer
+            try {
+                dataChannel.send(JSON.stringify({
+                    type: 'request-canvas-state',
+                    userId: this.userId,
+                    timestamp: Date.now()
+                }));
+            } catch (error) {
+                console.error('Error requesting canvas state:', error);
+            }
         };
         
         dataChannel.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            this.handleRemoteDrawing(data);
+            
+            if (data.type === 'request-canvas-state') {
+                // Send current canvas state as an image
+                this.sendCanvasState(dataChannel);
+            } else if (data.type === 'canvas-state') {
+                // Receive and apply canvas state
+                this.applyCanvasState(data);
+            } else if (data.type === 'user-info') {
+                // Handle user info updates
+                this.updateUserInfo(data);
+            } else if (data.type === 'chat-message') {
+                // Handle chat messages
+                this.addChatMessage(data);
+            } else if (data.type === 'cursor-position') {
+                // Handle cursor position updates
+                this.updateRemoteCursor(data);
+            } else {
+                this.handleRemoteDrawing(data);
+            }
         };
         
         dataChannel.onerror = (error) => {
             console.error(`Data channel error with ${userId}:`, error);
         };
+    }
+
+    sendCanvasState(dataChannel) {
+        try {
+            const imageData = this.canvas.toDataURL('image/png');
+            dataChannel.send(JSON.stringify({
+                type: 'canvas-state',
+                imageData: imageData,
+                userId: this.userId,
+                timestamp: Date.now()
+            }));
+        } catch (error) {
+            console.error('Error sending canvas state:', error);
+        }
+    }
+
+    applyCanvasState(data) {
+        if (data.userId === this.userId) return;
+        
+        try {
+            const img = new Image();
+            img.onload = () => {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.drawImage(img, 0, 0, this.canvasWidth, this.canvasHeight);
+            };
+            img.src = data.imageData;
+        } catch (error) {
+            console.error('Error applying canvas state:', error);
+        }
     }
 
     async handleOffer(data) {
@@ -580,6 +1047,42 @@ class CollaborativeCanvas {
         }
     }
 
+    updateUserInfo(data) {
+        this.connectedUsers.set(data.userId, {
+            userId: data.userId,
+            nickname: data.nickname,
+            lastSeen: data.timestamp
+        });
+        this.updateUsersList();
+    }
+
+    updateUsersList() {
+        const usersList = document.getElementById('usersList');
+        if (!usersList) return;
+        
+        usersList.innerHTML = '';
+        
+        // Add self
+        const selfItem = document.createElement('div');
+        selfItem.className = 'user-item self';
+        selfItem.innerHTML = `
+            <span class="user-status online"></span>
+            <span class="user-nickname">${this.nickname} (You)</span>
+        `;
+        usersList.appendChild(selfItem);
+        
+        // Add other users
+        this.connectedUsers.forEach((user) => {
+            const userItem = document.createElement('div');
+            userItem.className = 'user-item';
+            userItem.innerHTML = `
+                <span class="user-status online"></span>
+                <span class="user-nickname">${user.nickname}</span>
+            `;
+            usersList.appendChild(userItem);
+        });
+    }
+
     removePeer(userId) {
         const peerConnection = this.peers.get(userId);
         if (peerConnection) {
@@ -592,16 +1095,33 @@ class CollaborativeCanvas {
             dataChannel.close();
             this.dataChannels.delete(userId);
         }
+        
+        // Remove user from connected users
+        this.connectedUsers.delete(userId);
+        this.updateUsersList();
+        
+        // Remove user's cursor
+        const cursor = this.remoteCursors.get(userId);
+        if (cursor) {
+            cursor.remove();
+            this.remoteCursors.delete(userId);
+        }
     }
 
     getCanvasCoordinates(e) {
         const rect = this.canvas.getBoundingClientRect();
-        const scaleX = this.canvas.width / rect.width;
-        const scaleY = this.canvas.height / rect.height;
         
+        // Normalize coordinates to canvas dimensions (0-1 range)
+        const normalizedX = (e.clientX - rect.left) / rect.width;
+        const normalizedY = (e.clientY - rect.top) / rect.height;
+        
+        // Convert to actual canvas coordinates
         return {
-            x: (e.clientX - rect.left) * scaleX,
-            y: (e.clientY - rect.top) * scaleY
+            x: normalizedX * this.canvasWidth,
+            y: normalizedY * this.canvasHeight,
+            // Also include normalized coordinates for transmission
+            normalizedX: normalizedX,
+            normalizedY: normalizedY
         };
     }
 
@@ -610,6 +1130,32 @@ class CollaborativeCanvas {
         const coords = this.getCanvasCoordinates(e);
         this.lastX = coords.x;
         this.lastY = coords.y;
+        
+        // Start a new drawing path
+        this.currentPath = [{
+            x: coords.x,
+            y: coords.y,
+            normalizedX: coords.normalizedX,
+            normalizedY: coords.normalizedY,
+            color: this.currentColor,
+            size: this.currentSize,
+            timestamp: Date.now()
+        }];
+        
+        // Send path start event
+        const pathStartData = {
+            type: 'path-start',
+            x: coords.x,
+            y: coords.y,
+            normalizedX: coords.normalizedX,
+            normalizedY: coords.normalizedY,
+            color: this.currentColor,
+            size: this.currentSize,
+            userId: this.userId,
+            timestamp: Date.now()
+        };
+        
+        this.addToDrawingBuffer(pathStartData);
     }
 
     draw(e) {
@@ -617,33 +1163,187 @@ class CollaborativeCanvas {
         
         const coords = this.getCanvasCoordinates(e);
         
+        // Draw locally
         this.ctx.strokeStyle = this.currentColor;
         this.ctx.lineWidth = this.currentSize;
+        this.ctx.lineCap = 'round';
+        this.ctx.lineJoin = 'round';
         
         this.ctx.beginPath();
         this.ctx.moveTo(this.lastX, this.lastY);
         this.ctx.lineTo(coords.x, coords.y);
         this.ctx.stroke();
         
+        // Add to current path
+        this.currentPath.push({
+            x: coords.x,
+            y: coords.y,
+            normalizedX: coords.normalizedX,
+            normalizedY: coords.normalizedY,
+            color: this.currentColor,
+            size: this.currentSize,
+            timestamp: Date.now()
+        });
+        
+        // Create drawing data for transmission
         const drawingData = {
-            type: 'draw',
+            type: 'path-point',
             fromX: this.lastX,
             fromY: this.lastY,
             toX: coords.x,
             toY: coords.y,
+            normalizedFromX: this.lastNormalizedX || coords.normalizedX,
+            normalizedFromY: this.lastNormalizedY || coords.normalizedY,
+            normalizedToX: coords.normalizedX,
+            normalizedToY: coords.normalizedY,
             color: this.currentColor,
             size: this.currentSize,
-            userId: this.userId
+            userId: this.userId,
+            timestamp: Date.now()
         };
         
-        this.broadcastDrawing(drawingData);
+        this.addToDrawingBuffer(drawingData);
         
         this.lastX = coords.x;
         this.lastY = coords.y;
+        this.lastNormalizedX = coords.normalizedX;
+        this.lastNormalizedY = coords.normalizedY;
     }
 
     stopDrawing() {
+        if (!this.isDrawing) return;
+        
         this.isDrawing = false;
+        
+        // Send path end event
+        const pathEndData = {
+            type: 'path-end',
+            userId: this.userId,
+            timestamp: Date.now(),
+            pathLength: this.currentPath.length
+        };
+        
+        this.addToDrawingBuffer(pathEndData);
+        
+        // Clear current path
+        this.currentPath = [];
+        this.lastNormalizedX = undefined;
+        this.lastNormalizedY = undefined;
+    }
+
+    sendCursorPosition(e) {
+        // Throttle cursor updates to avoid flooding
+        const now = Date.now();
+        if (now - (this.lastCursorSent || 0) < 50) return; // Max 20 updates per second
+        this.lastCursorSent = now;
+        
+        const coords = this.getCanvasCoordinates(e);
+        const cursorData = {
+            type: 'cursor-position',
+            userId: this.userId,
+            nickname: this.nickname,
+            x: coords.x,
+            y: coords.y,
+            normalizedX: coords.normalizedX,
+            normalizedY: coords.normalizedY,
+            isDrawing: this.isDrawing,
+            color: this.currentColor,
+            size: this.currentSize,
+            timestamp: now
+        };
+        
+        this.dataChannels.forEach((channel) => {
+            if (channel.readyState === 'open') {
+                try {
+                    channel.send(JSON.stringify(cursorData));
+                } catch (error) {
+                    // Silently ignore cursor position errors to avoid spam
+                }
+            }
+        });
+    }
+
+    updateRemoteCursor(data) {
+        if (data.userId === this.userId) return;
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const x = data.normalizedX * rect.width + rect.left;
+        const y = data.normalizedY * rect.height + rect.top;
+        
+        let cursor = this.remoteCursors.get(data.userId);
+        if (!cursor) {
+            cursor = this.createRemoteCursor(data.userId, data.nickname);
+            this.remoteCursors.set(data.userId, cursor);
+        }
+        
+        // Update cursor position
+        cursor.style.left = `${x}px`;
+        cursor.style.top = `${y}px`;
+        cursor.style.display = 'block';
+        
+        // Update cursor appearance based on drawing state
+        const cursorDot = cursor.querySelector('.cursor-dot');
+        if (cursorDot) {
+            cursorDot.style.backgroundColor = data.color;
+            cursorDot.style.width = `${Math.max(8, Math.min(20, data.size))}px`;
+            cursorDot.style.height = `${Math.max(8, Math.min(20, data.size))}px`;
+            cursorDot.style.opacity = data.isDrawing ? '0.8' : '0.5';
+        }
+        
+        // Hide cursor after inactivity
+        clearTimeout(cursor.hideTimeout);
+        cursor.hideTimeout = setTimeout(() => {
+            cursor.style.display = 'none';
+        }, 2000);
+    }
+
+    createRemoteCursor(userId, nickname) {
+        const cursor = document.createElement('div');
+        cursor.className = 'remote-cursor';
+        cursor.id = `cursor-${userId}`;
+        cursor.style.cssText = `
+            position: fixed;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+        `;
+        
+        cursor.innerHTML = `
+            <div class="cursor-dot" style="
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background-color: #000;
+                margin-bottom: 2px;
+            "></div>
+            <div class="cursor-label" style="
+                background: rgba(0,0,0,0.8);
+                color: white;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 11px;
+                white-space: nowrap;
+            ">${nickname}</div>
+        `;
+        
+        document.body.appendChild(cursor);
+        return cursor;
+    }
+
+    addToDrawingBuffer(data) {
+        this.drawingBuffer.push(data);
+    }
+
+    flushDrawingBuffer() {
+        if (this.drawingBuffer.length === 0) return;
+        
+        // Send all buffered drawing data
+        const bufferCopy = [...this.drawingBuffer];
+        this.drawingBuffer = [];
+        
+        bufferCopy.forEach(data => {
+            this.broadcastDrawing(data);
+        });
     }
 
     broadcastDrawing(data) {
@@ -681,14 +1381,44 @@ class CollaborativeCanvas {
     handleRemoteDrawing(data) {
         if (data.userId === this.userId) return;
         
-        if (data.type === 'draw') {
+        // Use normalized coordinates for consistent positioning across different screen sizes
+        const fromX = data.normalizedFromX !== undefined ? 
+            data.normalizedFromX * this.canvasWidth : data.fromX;
+        const fromY = data.normalizedFromY !== undefined ? 
+            data.normalizedFromY * this.canvasHeight : data.fromY;
+        const toX = data.normalizedToX !== undefined ? 
+            data.normalizedToX * this.canvasWidth : data.toX;
+        const toY = data.normalizedToY !== undefined ? 
+            data.normalizedToY * this.canvasHeight : data.toY;
+        const x = data.normalizedX !== undefined ? 
+            data.normalizedX * this.canvasWidth : data.x;
+        const y = data.normalizedY !== undefined ? 
+            data.normalizedY * this.canvasHeight : data.y;
+        
+        if (data.type === 'draw' || data.type === 'path-point') {
+            // Set consistent drawing properties
             this.ctx.strokeStyle = data.color;
             this.ctx.lineWidth = data.size;
+            this.ctx.lineCap = 'round';
+            this.ctx.lineJoin = 'round';
             
             this.ctx.beginPath();
-            this.ctx.moveTo(data.fromX, data.fromY);
-            this.ctx.lineTo(data.toX, data.toY);
+            this.ctx.moveTo(fromX, fromY);
+            this.ctx.lineTo(toX, toY);
             this.ctx.stroke();
+        } else if (data.type === 'path-start') {
+            // Store the start of a new remote path
+            this.ctx.strokeStyle = data.color;
+            this.ctx.lineWidth = data.size;
+            this.ctx.lineCap = 'round';
+            this.ctx.lineJoin = 'round';
+            
+            // Draw a small dot at the start point
+            this.ctx.beginPath();
+            this.ctx.arc(x, y, data.size / 2, 0, 2 * Math.PI);
+            this.ctx.fill();
+        } else if (data.type === 'path-end') {
+            // Path ended - could add any cleanup logic here
         } else if (data.type === 'clear') {
             this.clearCanvas();
         }
