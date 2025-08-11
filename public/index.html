@@ -7,34 +7,104 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🎨 Collaborative Canvas</h1>
-            <div class="controls">
-                <div class="color-picker">
-                    <label for="colorPicker">Color:</label>
-                    <input type="color" id="colorPicker" value="#000000">
-                </div>
-                <div class="brush-size">
-                    <label for="brushSize">Size:</label>
-                    <input type="range" id="brushSize" min="1" max="50" value="5">
-                    <span id="sizeDisplay">5</span>px
-                </div>
-                <button id="clearCanvas">Clear Canvas</button>
-                <div class="connection-status">
-                    <span id="connectionStatus">Connecting...</span>
-                    <span id="userCount">0 users online</span>
-                </div>
+    <div class="app">
+        <header class="topbar">
+            <div class="brand">
+                <span class="logo" aria-hidden="true">🎨</span>
+                <h1 class="title">Collaborative Canvas</h1>
+            </div>
+            <div class="status">
+                <span id="connectionStatus" class="chip connecting" aria-live="polite">Connecting...</span>
+                <span id="userCount" class="muted" aria-live="polite">0 users online</span>
             </div>
         </header>
-        
-        <main>
-            <canvas id="drawingCanvas" width="1200" height="600"></canvas>
-        </main>
-        
-        <div class="info">
-            <p>Draw on the canvas and see others draw in real-time!</p>
+
+        <div class="workspace">
+            <aside class="sidebar" aria-label="Canvas tools">
+                <div class="panel">
+                    <div class="group">
+                        <label for="colorPicker" class="label">Color</label>
+                        <input type="hidden" id="colorPicker" value="#000000" aria-label="Pick brush color">
+                        <button id="colorTrigger" class="color-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="colorPopover">
+                            <span class="trigger-dot" style="--c:#000000"></span>
+                            <span id="colorHexLabel" class="trigger-hex">#000000</span>
+                        </button>
+                        <div id="colorPopover" class="color-popover" role="dialog" aria-modal="false" aria-label="Color picker" hidden>
+                            <div class="picker-row">
+                                <canvas id="colorSquare" class="color-square" aria-label="Saturation and brightness"></canvas>
+                                <canvas id="hueSlider" class="hue-slider" aria-label="Hue"></canvas>
+                            </div>
+                            <div class="picker-controls">
+                                <div class="preview-chip">
+                                    <span id="pickerPreview" class="preview-dot"></span>
+                                </div>
+                                <input id="colorHexInput" class="num" type="text" value="#000000" aria-label="Hex color">
+                                <button id="applyHex" class="btn btn-ghost" type="button">Apply</button>
+                            </div>
+                        </div>
+                        <div class="swatches" aria-label="Quick colors">
+                            <button class="swatch" style="--sw:#000000" data-color="#000000" title="Black"></button>
+                            <button class="swatch" style="--sw:#ffffff" data-color="#ffffff" title="White"></button>
+                            <button class="swatch" style="--sw:#ef4444" data-color="#ef4444" title="Red"></button>
+                            <button class="swatch" style="--sw:#f59e0b" data-color="#f59e0b" title="Orange"></button>
+                            <button class="swatch" style="--sw:#eab308" data-color="#eab308" title="Yellow"></button>
+                            <button class="swatch" style="--sw:#22c55e" data-color="#22c55e" title="Green"></button>
+                            <button class="swatch" style="--sw:#06b6d4" data-color="#06b6d4" title="Cyan"></button>
+                            <button class="swatch" style="--sw:#3b82f6" data-color="#3b82f6" title="Blue"></button>
+                            <button class="swatch" style="--sw:#8b5cf6" data-color="#8b5cf6" title="Purple"></button>
+                            <button class="swatch" style="--sw:#ec4899" data-color="#ec4899" title="Pink"></button>
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <label for="brushSize" class="label">Brush Size</label>
+                        <div class="range-row">
+                            <button id="sizeDec" class="btn btn-ghost" aria-label="Decrease size" title="Decrease">−</button>
+                            <input type="range" id="brushSize" min="1" max="50" value="5" aria-label="Brush size">
+                            <button id="sizeInc" class="btn btn-ghost" aria-label="Increase size" title="Increase">+</button>
+                        </div>
+                        <div class="range-row">
+                            <input type="number" id="brushSizeNumber" min="1" max="50" value="5" aria-label="Brush size number" class="num">
+                            <span id="sizeDisplay" class="size-chip" aria-live="polite">5</span>
+                            <span class="px">px</span>
+                        </div>
+                        <div class="quick-sizes" aria-label="Quick sizes">
+                            <button class="size-quick" data-size="2">2</button>
+                            <button class="size-quick" data-size="5">5</button>
+                            <button class="size-quick" data-size="10">10</button>
+                            <button class="size-quick" data-size="20">20</button>
+                            <button class="size-quick" data-size="40">40</button>
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <button id="clearCanvas" class="btn btn-danger" title="Clear for everyone">Clear Canvas</button>
+                    </div>
+
+                    <div class="group preview-card" aria-label="Brush preview">
+                        <div class="preview-row">
+                            <div id="brushPreviewCircle" class="preview-dot"></div>
+                            <div class="preview-text">Live brush preview</div>
+                        </div>
+                    </div>
+
+                    <div class="tips">
+                        <p>Tip: Press and drag to draw. Change color and size on the fly.</p>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="canvas-area">
+                <div class="canvas-frame">
+                    <div class="grid-bg"></div>
+                    <canvas id="drawingCanvas" width="1200" height="600"></canvas>
+                </div>
+            </main>
         </div>
+
+        <footer class="footer">
+            <div class="info">Draw together in real-time. WebRTC-powered peer-to-peer.</div>
+        </footer>
     </div>
 
     <script src="script.js"></script>

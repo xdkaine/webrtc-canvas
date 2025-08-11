@@ -153,19 +153,254 @@ class CollaborativeCanvas {
 
     initializeControls() {
         const colorPicker = document.getElementById('colorPicker');
+        const colorTrigger = document.getElementById('colorTrigger');
+        const colorPopover = document.getElementById('colorPopover');
+        const colorHexLabel = document.getElementById('colorHexLabel');
+        const colorHexInput = document.getElementById('colorHexInput');
+        const applyHexBtn = document.getElementById('applyHex');
+        const colorSquare = document.getElementById('colorSquare');
+        const hueSlider = document.getElementById('hueSlider');
+        let picking = { h: 0, s: 0, v: 0 }; // HSV state
         const brushSize = document.getElementById('brushSize');
         const sizeDisplay = document.getElementById('sizeDisplay');
         const clearButton = document.getElementById('clearCanvas');
+        const sizeNumber = document.getElementById('brushSizeNumber');
+        const sizeInc = document.getElementById('sizeInc');
+        const sizeDec = document.getElementById('sizeDec');
+        const previewDot = document.getElementById('brushPreviewCircle');
+        const swatches = document.querySelectorAll('.swatch');
+        const quickSizes = document.querySelectorAll('.size-quick');
         
-        colorPicker.addEventListener('change', (e) => {
-            this.currentColor = e.target.value;
+        // Custom color picker popover
+        const closePopover = () => {
+            if (!colorPopover) return;
+            colorPopover.hidden = true;
+            if (colorTrigger) colorTrigger.setAttribute('aria-expanded', 'false');
+        };
+        const openPopover = () => {
+            if (!colorPopover) return;
+            colorPopover.hidden = false;
+            if (colorTrigger) colorTrigger.setAttribute('aria-expanded', 'true');
+            // draw after layout is applied
+            requestAnimationFrame(() => {
+                drawHue();
+                drawSV();
+                // draw once more next frame for safety on some browsers
+                requestAnimationFrame(() => {
+                    drawHue();
+                    drawSV();
+                });
+            });
+        };
+
+        const hexFromHSV = (h, s, v) => {
+            const f = (n, k=(n+h/60)%6) => v - v*s*Math.max(Math.min(k,4-k,1),0);
+            const r = Math.round(f(5)*255), g = Math.round(f(3)*255), b = Math.round(f(1)*255);
+            return '#' + [r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');
+        };
+        const setupCanvasDPR = (canvas) => {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            const needResize = canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr);
+            if (needResize) {
+                canvas.width = Math.round(rect.width * dpr);
+                canvas.height = Math.round(rect.height * dpr);
+                const ctx = canvas.getContext('2d');
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
+            return { width: rect.width, height: rect.height };
+        };
+        const drawHue = () => {
+            if (!hueSlider) return;
+            const ctx = hueSlider.getContext('2d');
+            const { width, height } = setupCanvasDPR(hueSlider);
+            ctx.clearRect(0, 0, width, height);
+            const grd = ctx.createLinearGradient(0, 0, 0, height);
+            grd.addColorStop(0, '#ff0000');
+            grd.addColorStop(1/6, '#ffff00');
+            grd.addColorStop(2/6, '#00ff00');
+            grd.addColorStop(3/6, '#00ffff');
+            grd.addColorStop(4/6, '#0000ff');
+            grd.addColorStop(5/6, '#ff00ff');
+            grd.addColorStop(1, '#ff0000');
+            ctx.fillStyle = grd;
+            ctx.fillRect(0, 0, width, height);
+        };
+        const drawSV = () => {
+            if (!colorSquare) return;
+            const ctx = colorSquare.getContext('2d');
+            const { width, height } = setupCanvasDPR(colorSquare);
+            ctx.clearRect(0, 0, width, height);
+            // base hue
+            ctx.fillStyle = hexFromHSV(picking.h, 1, 1);
+            ctx.fillRect(0, 0, width, height);
+            // white gradient left->right (saturation)
+            const grdWhite = ctx.createLinearGradient(0, 0, width, 0);
+            grdWhite.addColorStop(0, '#ffffff');
+            grdWhite.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = grdWhite;
+            ctx.fillRect(0, 0, width, height);
+            // black gradient top->bottom (value)
+            const grdBlack = ctx.createLinearGradient(0, 0, 0, height);
+            grdBlack.addColorStop(0, 'rgba(0,0,0,0)');
+            grdBlack.addColorStop(1, '#000000');
+            ctx.fillStyle = grdBlack;
+            ctx.fillRect(0, 0, width, height);
+        };
+        const updateFromHSV = () => {
+            const hex = hexFromHSV(picking.h, picking.s, picking.v);
+            this.currentColor = hex;
+            if (colorPicker) colorPicker.value = hex;
+            if (colorHexLabel) colorHexLabel.textContent = hex;
+            if (colorHexInput) colorHexInput.value = hex;
+            if (previewDot) this.updatePreview(previewDot);
+            const triggerDot = document.querySelector('.trigger-dot');
+            if (triggerDot) triggerDot.style.setProperty('--c', hex);
+        };
+
+        if (colorTrigger) {
+            colorTrigger.addEventListener('click', () => {
+                if (!colorPopover) return;
+                if (colorPopover.hidden) openPopover(); else closePopover();
+            });
+        }
+        document.addEventListener('click', (e) => {
+            if (!colorPopover) return;
+            if (e.target === colorPopover || e.target === colorTrigger || colorPopover.contains(e.target)) return;
+            closePopover();
         });
+
+        // Interactions: hue and SV
+        const pointer = {
+            down: false,
+            onDown: (el, cb) => {
+                el.addEventListener('mousedown', (e)=>{ pointer.down=true; cb(e); });
+                el.addEventListener('touchstart', (e)=>{ pointer.down=true; cb(e.touches[0]); e.preventDefault(); }, {passive:false});
+            },
+            onMove: (el, cb) => {
+                el.addEventListener('mousemove', (e)=>{ if(pointer.down) cb(e); });
+                el.addEventListener('touchmove', (e)=>{ if(pointer.down){ cb(e.touches[0]); e.preventDefault(); } }, {passive:false});
+            },
+            onUpGlobal: () => {
+                window.addEventListener('mouseup', ()=> pointer.down=false);
+                window.addEventListener('touchend', ()=> pointer.down=false);
+            }
+        };
+        pointer.onUpGlobal();
+
+        const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+    if (hueSlider) {
+            const pickHue = (pt) => {
+        const rect = hueSlider.getBoundingClientRect();
+                const y = clamp(pt.clientY - rect.top, 0, rect.height);
+                picking.h = (y / rect.height) * 360;
+                drawSV();
+                updateFromHSV();
+            };
+            pointer.onDown(hueSlider, pickHue);
+            pointer.onMove(hueSlider, pickHue);
+        }
+        if (colorSquare) {
+            const pickSV = (pt) => {
+                const rect = colorSquare.getBoundingClientRect();
+                const x = clamp(pt.clientX - rect.left, 0, rect.width);
+                const y = clamp(pt.clientY - rect.top, 0, rect.height);
+                picking.s = x / rect.width; // saturation 0..1
+                picking.v = 1 - (y / rect.height); // value 0..1
+                updateFromHSV();
+            };
+            pointer.onDown(colorSquare, pickSV);
+            pointer.onMove(colorSquare, pickSV);
+        }
+
+        // Redraw on resize for crisp gradients
+        window.addEventListener('resize', () => {
+            drawHue();
+            drawSV();
+        });
+
+        // Redraw when canvas elements resize (e.g., CSS changes)
+        if (window.ResizeObserver && colorSquare && hueSlider) {
+            const ro = new ResizeObserver(() => { drawHue(); drawSV(); });
+            ro.observe(colorSquare);
+            ro.observe(hueSlider);
+        }
+
+        if (applyHexBtn && colorHexInput) {
+            applyHexBtn.addEventListener('click', () => {
+                const val = (colorHexInput.value || '').trim();
+                const ok = /^#([0-9a-fA-F]{6})$/.test(val);
+                if (ok) {
+                    this.currentColor = val;
+                    colorPicker.value = val;
+                    colorHexLabel.textContent = val;
+                    const triggerDot = document.querySelector('.trigger-dot');
+                    if (triggerDot) triggerDot.style.setProperty('--c', val);
+                    this.updatePreview(previewDot);
+                }
+            });
+        }
         
         brushSize.addEventListener('input', (e) => {
-            this.currentSize = e.target.value;
-            sizeDisplay.textContent = e.target.value;
+            this.currentSize = Number(e.target.value);
+            sizeDisplay.textContent = String(this.currentSize);
+            if (sizeNumber) sizeNumber.value = String(this.currentSize);
+            this.updatePreview(previewDot);
         });
         
+        if (sizeNumber) {
+            sizeNumber.addEventListener('input', (e) => {
+                const val = Math.max(1, Math.min(50, Number(e.target.value)) || 1);
+                this.currentSize = val;
+                brushSize.value = String(val);
+                sizeDisplay.textContent = String(val);
+                this.updatePreview(previewDot);
+            });
+        }
+
+        if (sizeInc) {
+            sizeInc.addEventListener('click', () => {
+                const val = Math.min(50, this.currentSize + 1);
+                this.currentSize = val;
+                brushSize.value = String(val);
+                if (sizeNumber) sizeNumber.value = String(val);
+                sizeDisplay.textContent = String(val);
+                this.updatePreview(previewDot);
+            });
+        }
+
+        if (sizeDec) {
+            sizeDec.addEventListener('click', () => {
+                const val = Math.max(1, this.currentSize - 1);
+                this.currentSize = val;
+                brushSize.value = String(val);
+                if (sizeNumber) sizeNumber.value = String(val);
+                sizeDisplay.textContent = String(val);
+                this.updatePreview(previewDot);
+            });
+        }
+
+        swatches.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const c = btn.getAttribute('data-color');
+                if (!c) return;
+                this.currentColor = c;
+                colorPicker.value = c;
+                this.updatePreview(previewDot);
+            });
+        });
+
+        quickSizes.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const s = Number(btn.getAttribute('data-size')) || 5;
+                this.currentSize = Math.max(1, Math.min(50, s));
+                brushSize.value = String(this.currentSize);
+                if (sizeNumber) sizeNumber.value = String(this.currentSize);
+                sizeDisplay.textContent = String(this.currentSize);
+                this.updatePreview(previewDot);
+            });
+        });
+
         clearButton.addEventListener('click', () => {
             this.clearCanvas();
             this.broadcastDrawing({
@@ -173,6 +408,18 @@ class CollaborativeCanvas {
                 userId: this.userId
             });
         });
+
+        // initialize preview
+        this.updatePreview(previewDot);
+    }
+
+    updatePreview(previewDot) {
+        if (!previewDot) return;
+        const size = Math.max(6, Math.min(40, this.currentSize));
+        previewDot.style.width = `${size}px`;
+        previewDot.style.height = `${size}px`;
+        previewDot.style.background = this.currentColor;
+        previewDot.style.borderColor = this.currentColor.toLowerCase() === '#ffffff' ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.9)';
     }
 
     initializeWebRTC() {
