@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "routes": [
-    { "src": "/api/ws", "dest": "/api/ws.js" },
-    { "src": "/(.*)", "dest": "/public/$1" }
+  "rewrites": [
+    { "source": "/api/ws", "destination": "/api/ws.js" },
+    { "source": "/(.*)", "destination": "/public/$1" }
   ],
   "headers": [
     {
