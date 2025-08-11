@@ -2,7 +2,6 @@ class CollaborativeCanvas {
     constructor() {
         this.canvas = document.getElementById('drawingCanvas');
         this.ctx = this.canvas.getContext('2d');
-        this.socket = io();
         this.peers = new Map();
         this.dataChannels = new Map();
         
@@ -10,15 +9,107 @@ class CollaborativeCanvas {
         this.currentColor = '#000000';
         this.currentSize = 5;
         this.userId = this.generateUserId();
+        this.sessionId = 'default';
+        this.lastSignalCheck = 0;
+        this.lastDrawingCheck = 0;
         
         this.initializeCanvas();
         this.initializeControls();
         this.initializeWebRTC();
-        this.initializeSocketEvents();
+        this.joinSession();
+        this.startPolling();
     }
 
     generateUserId() {
         return 'user_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    async joinSession() {
+        try {
+            const response = await fetch('/api/join-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: this.userId, sessionId: this.sessionId })
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                console.log('Joined session, other users:', data.otherUsers);
+                this.updateConnectionStatus('connected');
+                this.updateUserCount(data.userCount);
+                
+                // Try to connect to existing users
+                data.otherUsers.forEach(userId => {
+                    this.createPeerConnection(userId, true);
+                });
+            }
+        } catch (error) {
+            console.error('Error joining session:', error);
+            this.updateConnectionStatus('disconnected');
+        }
+    }
+
+    startPolling() {
+        // Poll for signals every 1 second
+        setInterval(() => this.pollForSignals(), 1000);
+        
+        // Poll for drawing updates every 500ms
+        setInterval(() => this.pollForDrawingUpdates(), 500);
+        
+        // Update session info every 5 seconds
+        setInterval(() => this.updateSessionInfo(), 5000);
+    }
+
+    async pollForSignals() {
+        try {
+            const response = await fetch(`/api/get-signals/${this.userId}?sessionId=${this.sessionId}&since=${this.lastSignalCheck}`);
+            const data = await response.json();
+            
+            if (data.signals && data.signals.length > 0) {
+                for (const signal of data.signals) {
+                    await this.handleSignal(signal);
+                    this.lastSignalCheck = Math.max(this.lastSignalCheck, signal.timestamp);
+                }
+            }
+        } catch (error) {
+            console.error('Error polling for signals:', error);
+        }
+    }
+
+    async pollForDrawingUpdates() {
+        try {
+            const response = await fetch(`/api/get-drawing-updates/${this.userId}?sessionId=${this.sessionId}&since=${this.lastDrawingCheck}`);
+            const data = await response.json();
+            
+            if (data.updates && data.updates.length > 0) {
+                for (const update of data.updates) {
+                    this.handleRemoteDrawing(update.data);
+                    this.lastDrawingCheck = Math.max(this.lastDrawingCheck, update.timestamp);
+                }
+            }
+        } catch (error) {
+            console.error('Error polling for drawing updates:', error);
+        }
+    }
+
+    async updateSessionInfo() {
+        try {
+            const response = await fetch(`/api/session-info/${this.sessionId}`);
+            const data = await response.json();
+            this.updateUserCount(data.userCount);
+            
+            // Check for new users
+            const currentUsers = data.users.map(u => u.userId);
+            const newUsers = currentUsers.filter(userId => 
+                userId !== this.userId && !this.peers.has(userId)
+            );
+            
+            newUsers.forEach(userId => {
+                this.createPeerConnection(userId, true);
+            });
+        } catch (error) {
+            console.error('Error updating session info:', error);
+        }
     }
 
     initializeCanvas() {
@@ -84,52 +175,6 @@ class CollaborativeCanvas {
         });
     }
 
-    initializeSocketEvents() {
-        this.socket.on('connect', () => {
-            console.log('Connected to signaling server');
-            this.updateConnectionStatus('connected');
-            this.socket.emit('join-room', this.userId);
-        });
-
-        this.socket.on('disconnect', () => {
-            console.log('Disconnected from signaling server');
-            this.updateConnectionStatus('disconnected');
-        });
-
-        this.socket.on('user-connected', (userId) => {
-            console.log('User connected:', userId);
-            this.createPeerConnection(userId, true);
-        });
-
-        this.socket.on('user-disconnected', (userId) => {
-            console.log('User disconnected:', userId);
-            this.removePeer(userId);
-        });
-
-        this.socket.on('user-count', (count) => {
-            document.getElementById('userCount').textContent = `${count} users online`;
-        });
-
-        this.socket.on('webrtc-offer', async (data) => {
-            await this.handleOffer(data);
-        });
-
-        this.socket.on('webrtc-answer', async (data) => {
-            await this.handleAnswer(data);
-        });
-
-        this.socket.on('webrtc-ice-candidate', async (data) => {
-            await this.handleIceCandidate(data);
-        });
-
-        // Fallback for users without WebRTC support
-        this.socket.on('drawing-data', (data) => {
-            if (data.userId !== this.userId) {
-                this.handleRemoteDrawing(data);
-            }
-        });
-    }
-
     initializeWebRTC() {
         this.rtcConfig = {
             iceServers: [
@@ -137,6 +182,37 @@ class CollaborativeCanvas {
                 { urls: 'stun:stun1.l.google.com:19302' }
             ]
         };
+    }
+
+    async handleSignal(signal) {
+        const { fromUserId, signal: signalData } = signal;
+        
+        if (signalData.type === 'offer') {
+            await this.handleOffer({ offer: signalData.offer, fromUserId });
+        } else if (signalData.type === 'answer') {
+            await this.handleAnswer({ answer: signalData.answer, fromUserId });
+        } else if (signalData.type === 'ice-candidate') {
+            await this.handleIceCandidate({ candidate: signalData.candidate, fromUserId });
+        } else if (signalData.type === 'user-joined') {
+            this.createPeerConnection(fromUserId, true);
+        }
+    }
+
+    async sendSignal(toUserId, signal) {
+        try {
+            await fetch('/api/send-signal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fromUserId: this.userId,
+                    toUserId,
+                    signal,
+                    sessionId: this.sessionId
+                })
+            });
+        } catch (error) {
+            console.error('Error sending signal:', error);
+        }
     }
 
     async createPeerConnection(userId, isInitiator) {
@@ -158,10 +234,9 @@ class CollaborativeCanvas {
 
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
-                    this.socket.emit('webrtc-ice-candidate', {
-                        candidate: event.candidate,
-                        targetUserId: userId,
-                        fromUserId: this.userId
+                    this.sendSignal(userId, {
+                        type: 'ice-candidate',
+                        candidate: event.candidate
                     });
                 }
             };
@@ -178,10 +253,9 @@ class CollaborativeCanvas {
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 
-                this.socket.emit('webrtc-offer', {
-                    offer: offer,
-                    targetUserId: userId,
-                    fromUserId: this.userId
+                await this.sendSignal(userId, {
+                    type: 'offer',
+                    offer: offer
                 });
             }
         } catch (error) {
@@ -217,10 +291,9 @@ class CollaborativeCanvas {
 
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
-                    this.socket.emit('webrtc-ice-candidate', {
-                        candidate: event.candidate,
-                        targetUserId: data.fromUserId,
-                        fromUserId: this.userId
+                    this.sendSignal(data.fromUserId, {
+                        type: 'ice-candidate',
+                        candidate: event.candidate
                     });
                 }
             };
@@ -229,10 +302,9 @@ class CollaborativeCanvas {
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
 
-            this.socket.emit('webrtc-answer', {
-                answer: answer,
-                targetUserId: data.fromUserId,
-                fromUserId: this.userId
+            await this.sendSignal(data.fromUserId, {
+                type: 'answer',
+                answer: answer
             });
         } catch (error) {
             console.error('Error handling offer:', error);
@@ -339,8 +411,24 @@ class CollaborativeCanvas {
             }
         });
         
-        // Fallback: send via socket.io for users without WebRTC
-        this.socket.emit('drawing-data', data);
+        // Fallback: send via HTTP API for users without WebRTC
+        this.sendDrawingData(data);
+    }
+
+    async sendDrawingData(data) {
+        try {
+            await fetch('/api/broadcast-drawing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fromUserId: this.userId,
+                    drawingData: data,
+                    sessionId: this.sessionId
+                })
+            });
+        } catch (error) {
+            console.error('Error sending drawing data:', error);
+        }
     }
 
     handleRemoteDrawing(data) {
@@ -363,6 +451,10 @@ class CollaborativeCanvas {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
+    updateUserCount(count) {
+        document.getElementById('userCount').textContent = `${count} users online`;
+    }
+
     updateConnectionStatus(status) {
         const statusElement = document.getElementById('connectionStatus');
         statusElement.className = status;
@@ -379,9 +471,27 @@ class CollaborativeCanvas {
                 break;
         }
     }
+
+    // Cleanup when page unloads
+    async cleanup() {
+        try {
+            await fetch('/api/leave-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: this.userId, sessionId: this.sessionId })
+            });
+        } catch (error) {
+            console.error('Error during cleanup:', error);
+        }
+    }
 }
 
 // Initialize the application when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-    new CollaborativeCanvas();
+    const canvas = new CollaborativeCanvas();
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        canvas.cleanup();
+    });
 });
