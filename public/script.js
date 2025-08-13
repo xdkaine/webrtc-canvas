@@ -9,6 +9,15 @@ class OptimizedCollaborativeCanvas {
     }
     
     initialize() {
+        // Detect mobile device first
+        this.isMobile = this.detectMobileDevice();
+        
+        // Apply mobile class to body if mobile detected
+        if (this.isMobile) {
+            document.body.classList.add('mobile-device');
+            console.log('Mobile device detected - applying mobile optimizations');
+        }
+        
         this.canvas = document.getElementById('drawingCanvas');
         if (!this.canvas) {
             console.error('Canvas element with ID "drawingCanvas" not found!');
@@ -139,6 +148,19 @@ class OptimizedCollaborativeCanvas {
         // make a unique ID for this browser tab
         const tabId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
         return 'user_' + tabId;
+    }
+
+    detectMobileDevice() {
+        // Multiple methods to detect mobile devices for reliable detection
+        const userAgent = navigator.userAgent.toLowerCase();
+        const isMobileUA = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isSmallScreen = window.innerWidth <= 768; // Mobile breakpoint
+        
+        // Check for mobile-specific features or small screen (for testing/responsive design)
+        const hasMobileFeatures = isMobileUA || isTouchDevice || isSmallScreen;
+        
+        return hasMobileFeatures;
     }
 
     generateRandomNickname() {
@@ -2064,6 +2086,30 @@ class OptimizedCollaborativeCanvas {
 
     initializeUserInterface() {
         this.createCursorsContainer();
+        
+        // Apply mobile-specific UI modifications
+        if (this.isMobile) {
+            this.initializeMobileInterface();
+        }
+    }
+
+    initializeMobileInterface() {
+        console.log('Initializing mobile-specific interface');
+        
+        // Create mobile toolbar
+        this.createMobileToolbar();
+        
+        // Create mobile color picker panel
+        this.createMobileColorPicker();
+        
+        // Create mobile brush size control
+        this.createMobileBrushControl();
+        
+        // Optimize canvas for mobile touch
+        this.optimizeCanvasForMobile();
+        
+        // Create mobile chat interface
+        this.createMobileChatInterface();
     }
 
     initializeChat() {
@@ -2837,6 +2883,450 @@ class OptimizedCollaborativeCanvas {
         window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme } }));
     }
 }
+
+// Mobile interface methods
+OptimizedCollaborativeCanvas.prototype.createMobileToolbar = function() {
+    // Create a mobile toolbar at the bottom of the screen
+    const mobileToolbar = document.createElement('div');
+    mobileToolbar.className = 'mobile-toolbar';
+    mobileToolbar.innerHTML = `
+        <button class="mobile-tool-btn" id="mobileColorBtn" title="Colors">
+            <div class="current-color-indicator" style="background-color: ${this.currentColor}"></div>
+        </button>
+        <button class="mobile-tool-btn" id="mobileBrushBtn" title="Brush Size">
+            <span class="brush-size-text">${this.currentSize}px</span>
+        </button>
+        <button class="mobile-tool-btn" id="mobileClearBtn" title="Clear">
+            <span>🗑️</span>
+        </button>
+        <button class="mobile-tool-btn" id="mobileChatBtn" title="Chat">
+            <span>💬</span>
+            <div class="chat-badge" style="display: none;"></div>
+        </button>
+    `;
+    
+    document.body.appendChild(mobileToolbar);
+    
+    // Add event listeners for mobile toolbar
+    this.setupMobileToolbarEvents();
+};
+
+OptimizedCollaborativeCanvas.prototype.createMobileColorPicker = function() {
+    // Create a mobile-friendly color picker panel
+    const colorPanel = document.createElement('div');
+    colorPanel.className = 'mobile-color-panel';
+    colorPanel.style.display = 'none';
+    
+    colorPanel.innerHTML = `
+        <div class="mobile-panel-header">
+            <h3>Choose Color</h3>
+            <button class="mobile-close-btn">×</button>
+        </div>
+        <div class="mobile-color-grid">
+            <button class="mobile-color-btn" data-color="#000000" style="background: #000000" title="Black"></button>
+            <button class="mobile-color-btn" data-color="#ffffff" style="background: #ffffff" title="White"></button>
+            <button class="mobile-color-btn" data-color="#ef4444" style="background: #ef4444" title="Red"></button>
+            <button class="mobile-color-btn" data-color="#f59e0b" style="background: #f59e0b" title="Orange"></button>
+            <button class="mobile-color-btn" data-color="#eab308" style="background: #eab308" title="Yellow"></button>
+            <button class="mobile-color-btn" data-color="#22c55e" style="background: #22c55e" title="Green"></button>
+            <button class="mobile-color-btn" data-color="#06b6d4" style="background: #06b6d4" title="Cyan"></button>
+            <button class="mobile-color-btn" data-color="#3b82f6" style="background: #3b82f6" title="Blue"></button>
+            <button class="mobile-color-btn" data-color="#8b5cf6" style="background: #8b5cf6" title="Purple"></button>
+            <button class="mobile-color-btn" data-color="#ec4899" style="background: #ec4899" title="Pink"></button>
+            <button class="mobile-color-btn" data-color="#6b7280" style="background: #6b7280" title="Gray"></button>
+            <button class="mobile-color-btn" data-color="#f97316" style="background: #f97316" title="Orange Red"></button>
+        </div>
+    `;
+    
+    document.body.appendChild(colorPanel);
+    this.mobileColorPanel = colorPanel;
+    
+    // Setup color picker events
+    this.setupMobileColorPickerEvents();
+};
+
+OptimizedCollaborativeCanvas.prototype.createMobileBrushControl = function() {
+    // Create mobile brush size control panel
+    const brushPanel = document.createElement('div');
+    brushPanel.className = 'mobile-brush-panel';
+    brushPanel.style.display = 'none';
+    
+    brushPanel.innerHTML = `
+        <div class="mobile-panel-header">
+            <h3>Brush Size</h3>
+            <button class="mobile-close-btn">×</button>
+        </div>
+        <div class="mobile-brush-content">
+            <div class="mobile-brush-preview">
+                <div class="mobile-brush-dot" style="width: ${this.currentSize}px; height: ${this.currentSize}px; background: ${this.currentColor}"></div>
+            </div>
+            <div class="mobile-brush-slider-container">
+                <input type="range" class="mobile-brush-slider" min="1" max="50" value="${this.currentSize}" />
+                <div class="mobile-brush-size-display">${this.currentSize}px</div>
+            </div>
+            <div class="mobile-brush-presets">
+                <button class="mobile-brush-preset" data-size="2">2px</button>
+                <button class="mobile-brush-preset" data-size="5">5px</button>
+                <button class="mobile-brush-preset" data-size="10">10px</button>
+                <button class="mobile-brush-preset" data-size="20">20px</button>
+                <button class="mobile-brush-preset" data-size="35">35px</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(brushPanel);
+    this.mobileBrushPanel = brushPanel;
+    
+    // Setup brush control events
+    this.setupMobileBrushControlEvents();
+};
+
+OptimizedCollaborativeCanvas.prototype.optimizeCanvasForMobile = function() {
+    // Optimize canvas touch handling for mobile
+    if (this.canvas) {
+        // Prevent scrolling when touching the canvas
+        this.canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+        
+        this.canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+        
+        this.canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.createMobileChatInterface = function() {
+    // Create mobile chat interface - simplified version
+    const chatPanel = document.createElement('div');
+    chatPanel.className = 'mobile-chat-panel';
+    chatPanel.style.display = 'none';
+    
+    chatPanel.innerHTML = `
+        <div class="mobile-panel-header">
+            <h3>Chat & Users</h3>
+            <button class="mobile-close-btn">×</button>
+        </div>
+        <div class="mobile-chat-content">
+            <div class="mobile-chat-tabs">
+                <button class="mobile-chat-tab active" data-tab="chat">Chat</button>
+                <button class="mobile-chat-tab" data-tab="users">Users</button>
+            </div>
+            <div class="mobile-chat-messages" id="mobileChatMessages"></div>
+            <div class="mobile-users-list" id="mobileUsersList" style="display: none;"></div>
+            <div class="mobile-chat-input-container">
+                <input type="text" class="mobile-chat-input" placeholder="Type a message..." />
+                <button class="mobile-chat-send">Send</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(chatPanel);
+    this.mobileChatPanel = chatPanel;
+    
+    // Setup mobile chat events
+    this.setupMobileChatEvents();
+};
+
+// Mobile event handlers
+OptimizedCollaborativeCanvas.prototype.setupMobileToolbarEvents = function() {
+    const colorBtn = document.getElementById('mobileColorBtn');
+    const brushBtn = document.getElementById('mobileBrushBtn');
+    const clearBtn = document.getElementById('mobileClearBtn');
+    const chatBtn = document.getElementById('mobileChatBtn');
+    
+    if (colorBtn) {
+        colorBtn.addEventListener('click', () => {
+            this.showMobileColorPicker();
+        });
+    }
+    
+    if (brushBtn) {
+        brushBtn.addEventListener('click', () => {
+            this.showMobileBrushControl();
+        });
+    }
+    
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            // Use existing clear canvas functionality
+            const clearButton = document.getElementById('clearCanvas');
+            if (clearButton) {
+                clearButton.click();
+            }
+        });
+    }
+    
+    if (chatBtn) {
+        chatBtn.addEventListener('click', () => {
+            this.showMobileChat();
+        });
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.setupMobileColorPickerEvents = function() {
+    if (!this.mobileColorPanel) return;
+    
+    // Close button
+    const closeBtn = this.mobileColorPanel.querySelector('.mobile-close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            this.hideMobileColorPicker();
+        });
+    }
+    
+    // Color buttons
+    const colorBtns = this.mobileColorPanel.querySelectorAll('.mobile-color-btn');
+    colorBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const color = btn.dataset.color;
+            this.selectMobileColor(color);
+            this.hideMobileColorPicker();
+        });
+    });
+    
+    // Close panel when clicking outside
+    this.mobileColorPanel.addEventListener('click', (e) => {
+        if (e.target === this.mobileColorPanel) {
+            this.hideMobileColorPicker();
+        }
+    });
+};
+
+OptimizedCollaborativeCanvas.prototype.setupMobileBrushControlEvents = function() {
+    if (!this.mobileBrushPanel) return;
+    
+    // Close button
+    const closeBtn = this.mobileBrushPanel.querySelector('.mobile-close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            this.hideMobileBrushControl();
+        });
+    }
+    
+    // Brush slider
+    const slider = this.mobileBrushPanel.querySelector('.mobile-brush-slider');
+    if (slider) {
+        slider.addEventListener('input', (e) => {
+            const size = parseInt(e.target.value);
+            this.updateMobileBrushSize(size);
+        });
+    }
+    
+    // Brush presets
+    const presets = this.mobileBrushPanel.querySelectorAll('.mobile-brush-preset');
+    presets.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const size = parseInt(btn.dataset.size);
+            this.updateMobileBrushSize(size);
+            // Update slider to match
+            if (slider) slider.value = size;
+        });
+    });
+    
+    // Close panel when clicking outside
+    this.mobileBrushPanel.addEventListener('click', (e) => {
+        if (e.target === this.mobileBrushPanel) {
+            this.hideMobileBrushControl();
+        }
+    });
+};
+
+OptimizedCollaborativeCanvas.prototype.setupMobileChatEvents = function() {
+    if (!this.mobileChatPanel) return;
+    
+    // Close button
+    const closeBtn = this.mobileChatPanel.querySelector('.mobile-close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            this.hideMobileChat();
+        });
+    }
+    
+    // Tab switching
+    const tabs = this.mobileChatPanel.querySelectorAll('.mobile-chat-tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            this.switchMobileChatTab(tab.dataset.tab);
+        });
+    });
+    
+    // Chat input
+    const input = this.mobileChatPanel.querySelector('.mobile-chat-input');
+    const sendBtn = this.mobileChatPanel.querySelector('.mobile-chat-send');
+    
+    if (input && sendBtn) {
+        const sendMessage = () => {
+            const message = input.value.trim();
+            if (message) {
+                // Use existing chat functionality
+                this.sendChatMessage(message);
+                input.value = '';
+            }
+        };
+        
+        sendBtn.addEventListener('click', sendMessage);
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    }
+    
+    // Close panel when clicking outside
+    this.mobileChatPanel.addEventListener('click', (e) => {
+        if (e.target === this.mobileChatPanel) {
+            this.hideMobileChat();
+        }
+    });
+};
+
+// Mobile UI helper methods
+OptimizedCollaborativeCanvas.prototype.showMobileColorPicker = function() {
+    if (this.mobileColorPanel) {
+        this.mobileColorPanel.style.display = 'flex';
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.hideMobileColorPicker = function() {
+    if (this.mobileColorPanel) {
+        this.mobileColorPanel.style.display = 'none';
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.showMobileBrushControl = function() {
+    if (this.mobileBrushPanel) {
+        this.mobileBrushPanel.style.display = 'flex';
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.hideMobileBrushControl = function() {
+    if (this.mobileBrushPanel) {
+        this.mobileBrushPanel.style.display = 'none';
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.showMobileChat = function() {
+    if (this.mobileChatPanel) {
+        this.mobileChatPanel.style.display = 'flex';
+        // Reset unread count when chat is opened
+        this.updateMobileChatBadge(0);
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.hideMobileChat = function() {
+    if (this.mobileChatPanel) {
+        this.mobileChatPanel.style.display = 'none';
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.selectMobileColor = function(color) {
+    this.currentColor = color;
+    this.updateDrawingProperties();
+    this.updateBrushPreview();
+    
+    // Update mobile toolbar color indicator
+    const colorIndicator = document.querySelector('.current-color-indicator');
+    if (colorIndicator) {
+        colorIndicator.style.backgroundColor = color;
+    }
+    
+    // Update mobile brush preview
+    this.updateMobileBrushPreview();
+    
+    console.log('Mobile color changed to:', color);
+};
+
+OptimizedCollaborativeCanvas.prototype.updateMobileBrushSize = function(size) {
+    this.currentSize = size;
+    this.updateDrawingProperties();
+    this.updateBrushPreview();
+    
+    // Update mobile toolbar size display
+    const sizeText = document.querySelector('.brush-size-text');
+    if (sizeText) {
+        sizeText.textContent = `${size}px`;
+    }
+    
+    // Update mobile brush preview
+    this.updateMobileBrushPreview();
+    
+    // Update size display in brush panel
+    const sizeDisplay = document.querySelector('.mobile-brush-size-display');
+    if (sizeDisplay) {
+        sizeDisplay.textContent = `${size}px`;
+    }
+    
+    console.log('Mobile brush size changed to:', size);
+};
+
+OptimizedCollaborativeCanvas.prototype.updateMobileBrushPreview = function() {
+    const brushDot = document.querySelector('.mobile-brush-dot');
+    if (brushDot) {
+        brushDot.style.width = `${this.currentSize}px`;
+        brushDot.style.height = `${this.currentSize}px`;
+        brushDot.style.backgroundColor = this.currentColor;
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.switchMobileChatTab = function(tab) {
+    const tabs = this.mobileChatPanel.querySelectorAll('.mobile-chat-tab');
+    const messagesContainer = document.getElementById('mobileChatMessages');
+    const usersContainer = document.getElementById('mobileUsersList');
+    
+    // Update tab states
+    tabs.forEach(t => t.classList.remove('active'));
+    const activeTab = this.mobileChatPanel.querySelector(`[data-tab="${tab}"]`);
+    if (activeTab) activeTab.classList.add('active');
+    
+    // Show/hide content
+    if (tab === 'chat') {
+        if (messagesContainer) messagesContainer.style.display = 'block';
+        if (usersContainer) usersContainer.style.display = 'none';
+    } else if (tab === 'users') {
+        if (messagesContainer) messagesContainer.style.display = 'none';
+        if (usersContainer) usersContainer.style.display = 'block';
+        this.updateMobileUsersList();
+    }
+};
+
+OptimizedCollaborativeCanvas.prototype.updateMobileUsersList = function() {
+    const container = document.getElementById('mobileUsersList');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    // Add current user
+    const currentUserDiv = document.createElement('div');
+    currentUserDiv.className = 'mobile-user-item current-user';
+    currentUserDiv.innerHTML = `<span class="user-name">${this.nickname || 'You'}</span><span class="user-status">Online</span>`;
+    container.appendChild(currentUserDiv);
+    
+    // Add other users
+    this.connectedUsers.forEach((user, userId) => {
+        if (userId !== this.userId) {
+            const userDiv = document.createElement('div');
+            userDiv.className = 'mobile-user-item';
+            userDiv.innerHTML = `<span class="user-name">${user.nickname}</span><span class="user-status">Online</span>`;
+            container.appendChild(userDiv);
+        }
+    });
+};
+
+OptimizedCollaborativeCanvas.prototype.updateMobileChatBadge = function(count) {
+    const badge = document.querySelector('.chat-badge');
+    if (badge) {
+        if (count > 0) {
+            badge.textContent = count > 99 ? '99+' : count.toString();
+            badge.style.display = 'flex';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+};
 
 // Initialize the application
 new OptimizedCollaborativeCanvas();
