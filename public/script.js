@@ -1596,7 +1596,6 @@ class OptimizedCollaborativeCanvas {
         }
         
         // Reduce aggressive canvas redraws in Firefox
-        this.firefoxOptimizedRedraw = true;
     }
 
     disableDrawingControls() {
