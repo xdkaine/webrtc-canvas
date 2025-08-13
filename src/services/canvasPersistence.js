@@ -72,35 +72,65 @@ class CanvasPersistenceService {
     }
 
     /**
-     * Load canvas state - now starts fresh every time
+     * Load canvas state - maintains persistent authoritative state
      */
     async loadCanvasState(canvasId = 'main') {
         try {
-            // Always start with fresh canvas state
-            const freshCanvasData = {
-                strokes: [],
-                background: '#ffffff',
-                metadata: {
-                    created: new Date().toISOString(),
-                    lastModified: new Date().toISOString(),
-                    version: '2.0'
+            // Check if already cached
+            if (this.canvasStates.has(canvasId)) {
+                const cached = this.canvasStates.get(canvasId);
+                logger.debug('Canvas state loaded from cache', { canvasId });
+                return cached.data;
+            }
+
+            // Try to load from disk first
+            let canvasData = null;
+            try {
+                const filePath = path.join(config.persistence.roomDataDir, `${canvasId}.json`);
+                const fileExists = await fs.access(filePath).then(() => true).catch(() => false);
+                
+                if (fileExists) {
+                    const fileData = await fs.readFile(filePath, 'utf8');
+                    canvasData = JSON.parse(fileData);
+                    
+                    // Validate loaded data
+                    const validation = securityValidator.validateCanvasState(canvasData);
+                    if (validation.valid && validation.data) {
+                        logger.info('Canvas state loaded from disk', { canvasId });
+                    } else {
+                        logger.warn('Invalid canvas state on disk, creating fresh', { canvasId });
+                        canvasData = null;
+                    }
                 }
-            };
+            } catch (diskError) {
+                logger.warn('Failed to load canvas state from disk', { canvasId, error: diskError.message });
+                canvasData = null;
+            }
 
-            // Clear any old cached data
-            this.canvasStates.clear();
+            // If no valid data found, create fresh state
+            if (!canvasData) {
+                canvasData = {
+                    strokes: [],
+                    background: '#ffffff',
+                    metadata: {
+                        created: new Date().toISOString(),
+                        lastModified: new Date().toISOString(),
+                        version: '2.0'
+                    }
+                };
+                logger.info('Canvas state initialized fresh', { canvasId });
+            }
 
-            // Cache the fresh state
+            // Cache the state
             this.canvasStates.set(canvasId, {
-                data: freshCanvasData,
+                data: canvasData,
                 timestamp: Date.now(),
                 isDirty: false
             });
 
             memoryManager.touchObject('canvasPersistence');
-            logger.info('Canvas state initialized fresh', { canvasId });
             
-            return freshCanvasData;
+            return canvasData;
         } catch (error) {
             logger.error('Error in loadCanvasState', { canvasId, error });
             
@@ -216,6 +246,126 @@ class CanvasPersistenceService {
             return cached.data;
         }
         return null;
+    }
+
+    /**
+     * Update canvas state with drawing command (for authoritative sync)
+     */
+    async addDrawingCommand(canvasId = 'main', drawingCommand) {
+        try {
+            // Get current canvas state
+            const canvasData = await this.loadCanvasState(canvasId);
+            
+            if (!canvasData.strokes) {
+                canvasData.strokes = [];
+            }
+
+            // Add the drawing command to the strokes array
+            switch (drawingCommand.type) {
+                case 'startDrawing':
+                    // Start a new stroke
+                    canvasData.strokes.push({
+                        id: drawingCommand.strokeId,
+                        userId: drawingCommand.userId,
+                        color: drawingCommand.color,
+                        size: drawingCommand.size,
+                        points: [{
+                            x: drawingCommand.normalizedX,
+                            y: drawingCommand.normalizedY,
+                            timestamp: drawingCommand.serverTimestamp
+                        }],
+                        startTime: drawingCommand.serverTimestamp,
+                        completed: false
+                    });
+                    break;
+
+                case 'draw':
+                    // Add point to existing stroke
+                    const activeStroke = canvasData.strokes.find(s => 
+                        s.id === drawingCommand.strokeId && !s.completed
+                    );
+                    if (activeStroke) {
+                        activeStroke.points.push({
+                            x: drawingCommand.normalizedX,
+                            y: drawingCommand.normalizedY,
+                            timestamp: drawingCommand.serverTimestamp
+                        });
+                    }
+                    break;
+
+                case 'endDrawing':
+                    // Mark stroke as completed
+                    const endingStroke = canvasData.strokes.find(s => 
+                        s.id === drawingCommand.strokeId && !s.completed
+                    );
+                    if (endingStroke) {
+                        endingStroke.completed = true;
+                        endingStroke.endTime = drawingCommand.serverTimestamp;
+                    }
+                    break;
+
+                case 'clear-canvas':
+                    // Clear all strokes
+                    canvasData.strokes = [];
+                    canvasData.background = '#ffffff';
+                    break;
+            }
+
+            // Update metadata
+            canvasData.metadata.lastModified = new Date().toISOString();
+            canvasData.metadata.lastCommand = drawingCommand.type;
+            canvasData.metadata.lastSequence = drawingCommand.serverSequence;
+
+            // Update cache with dirty flag
+            this.canvasStates.set(canvasId, {
+                data: canvasData,
+                timestamp: Date.now(),
+                isDirty: true
+            });
+
+            // Save to disk (debounced)
+            this.scheduleCanvasSave(canvasId);
+
+            memoryManager.touchObject('canvasPersistence');
+            logger.debug('Drawing command added to canvas state', {
+                canvasId,
+                type: drawingCommand.type,
+                sequence: drawingCommand.serverSequence,
+                strokeCount: canvasData.strokes.length
+            });
+
+            return true;
+
+        } catch (error) {
+            logger.error('Error adding drawing command to canvas state', { 
+                canvasId, 
+                command: drawingCommand.type,
+                error 
+            });
+            return false;
+        }
+    }
+
+    /**
+     * Schedule canvas save with debouncing
+     */
+    scheduleCanvasSave(canvasId) {
+        const saveKey = `save_${canvasId}`;
+        
+        // Clear existing timeout
+        if (this[saveKey]) {
+            clearTimeout(this[saveKey]);
+        }
+
+        // Schedule save after 2 seconds of inactivity
+        this[saveKey] = setTimeout(async () => {
+            const cached = this.canvasStates.get(canvasId);
+            if (cached && cached.isDirty) {
+                await this.saveCanvasState(canvasId, cached.data);
+                cached.isDirty = false;
+            }
+            delete this[saveKey];
+        }, 2000);
     }
 
     /**

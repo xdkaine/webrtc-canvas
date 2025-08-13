@@ -755,16 +755,17 @@ class OptimizedCollaborativeCanvas {
         
         this.updateUsersList();
         
-        // server should send us the canvas
-        console.log('waiting for canvas data...');
+        // immediately request current canvas state from server
+        console.log('requesting current canvas state from server...');
+        this.requestCanvasState();
         
-        // just in case server doesn't send it
+        // fallback request in case first one fails
         setTimeout(() => {
-            console.log('canvas timeout - asking server again...');
+            console.log('fallback canvas request...');
             if (this.socket && this.socket.connected) {
-                this.socket.emit('request-canvas-state');
+                this.requestCanvasState();
             }
-        }, 3000); // give it 3 seconds
+        }, 1000); // faster fallback
         
         this.showNotification(`joined with ${data.userCount} people`, 'success');
     }
@@ -1405,15 +1406,39 @@ class OptimizedCollaborativeCanvas {
                 return;
             }
             
-            const imageData = data.data.imageData;
+            const canvasData = data.data;
+            
+            // Check for stroke-based data (new format)
+            if (canvasData.strokes && Array.isArray(canvasData.strokes)) {
+                console.log('Rendering authoritative canvas state from strokes:', canvasData.strokes.length, 'strokes');
+                
+                // Clear canvas and set background
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                const bgColor = canvasData.background || '#ffffff';
+                this.ctx.fillStyle = bgColor;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Render each completed stroke
+                canvasData.strokes.forEach(stroke => {
+                    if (stroke.completed && stroke.points && stroke.points.length > 0) {
+                        this.renderStroke(stroke);
+                    }
+                });
+                
+                console.log('✅ Authoritative canvas state applied from', canvasData.strokes.length, 'strokes');
+                return;
+            }
+            
+            // Fallback to imageData format (legacy support)
+            const imageData = canvasData.imageData;
             if (!imageData) {
-                console.log('No image data - setting white background');
+                console.log('No stroke or image data - setting white background');
                 this.ctx.fillStyle = '#ffffff';
                 this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                 return;
             }
             
-            console.log('Loading server canvas state...');
+            console.log('Loading legacy canvas state from imageData...');
             const img = new Image();
             
             img.onload = () => {
@@ -1424,9 +1449,6 @@ class OptimizedCollaborativeCanvas {
                         return;
                     }
                     
-                    // Create a backup of current canvas before applying new state
-                    const currentState = this.canvas.toDataURL();
-                    
                     // Clear and set white background first
                     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                     this.ctx.fillStyle = '#ffffff';
@@ -1434,7 +1456,7 @@ class OptimizedCollaborativeCanvas {
                     
                     // Draw the server canvas state
                     this.ctx.drawImage(img, 0, 0, this.canvasWidth, this.canvasHeight);
-                    console.log('✅ Server canvas state applied successfully');
+                    console.log('✅ Legacy canvas state applied successfully');
                     
                 } catch (error) {
                     console.error('Error in img.onload:', error);
@@ -1456,6 +1478,49 @@ class OptimizedCollaborativeCanvas {
             console.error('❌ Error applying canvas state:', error);
             this.ctx.fillStyle = '#ffffff';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        }
+    }
+
+    /**
+     * Render a stroke from server canvas state
+     */
+    renderStroke(stroke) {
+        try {
+            if (!stroke.points || stroke.points.length === 0) {
+                return;
+            }
+
+            this.ctx.save();
+            
+            // Set stroke properties
+            this.ctx.strokeStyle = stroke.color || '#000000';
+            this.ctx.lineWidth = stroke.size || 5;
+            this.ctx.lineCap = 'round';
+            this.ctx.lineJoin = 'round';
+            
+            // Begin the path
+            this.ctx.beginPath();
+            
+            // Move to first point
+            const firstPoint = stroke.points[0];
+            const firstX = firstPoint.x * this.canvasWidth;
+            const firstY = firstPoint.y * this.canvasHeight;
+            this.ctx.moveTo(firstX, firstY);
+            
+            // Draw lines to subsequent points
+            for (let i = 1; i < stroke.points.length; i++) {
+                const point = stroke.points[i];
+                const x = point.x * this.canvasWidth;
+                const y = point.y * this.canvasHeight;
+                this.ctx.lineTo(x, y);
+            }
+            
+            // Stroke the path
+            this.ctx.stroke();
+            this.ctx.restore();
+            
+        } catch (error) {
+            console.error('Error rendering stroke:', error);
         }
     }
 
@@ -1718,11 +1783,11 @@ class OptimizedCollaborativeCanvas {
                 return originalRAF(() => {
                     // Small delay to prevent overwhelming Firefox's renderer
                     setTimeout(callback, 0);
+                });
                 // Call the callback directly to preserve RAF timing optimization
                 return originalRAF(callback);
             };
-        // Use Firefox-specific requestAnimationFrame wrapper if needed
-        // (No global override; use this.firefoxRequestAnimationFrame where needed)
+        }
         
         // Optimize canvas context for Firefox
         if (this.ctx) {
