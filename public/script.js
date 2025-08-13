@@ -87,6 +87,7 @@ class OptimizedCollaborativeCanvas {
         // auto-save stuff
         this.autoSaveInterval = null;
         this.lastCanvasSave = 0;
+        this.pendingCanvasSave = null;
         
         // setting everything up
         this.initializeCanvas();
@@ -200,7 +201,8 @@ class OptimizedCollaborativeCanvas {
         
         const updateButton = (value) => {
             const trimmedValue = value.trim();
-            const isValid = trimmedValue.length > 0;
+            // Enforce minimum 2 characters like the backend does
+            const isValid = trimmedValue.length >= 2;
             
             if (confirmBtn.disabled === isValid) {
                 confirmBtn.disabled = !isValid;
@@ -209,6 +211,22 @@ class OptimizedCollaborativeCanvas {
             const newText = isValid ? `Join as "${trimmedValue}"` : 'Join Canvas';
             if (confirmBtn.textContent !== newText) {
                 confirmBtn.textContent = newText;
+            }
+            
+            // Show validation message
+            const existingError = modalOverlay.querySelector('.validation-error');
+            if (!isValid && trimmedValue.length > 0 && trimmedValue.length < 2) {
+                if (!existingError) {
+                    const errorMsg = document.createElement('p');
+                    errorMsg.className = 'validation-error';
+                    errorMsg.style.color = '#ef4444';
+                    errorMsg.style.fontSize = '12px';
+                    errorMsg.style.marginTop = '5px';
+                    errorMsg.textContent = 'Name must be at least 2 characters long';
+                    input.parentNode.appendChild(errorMsg);
+                }
+            } else if (existingError) {
+                existingError.remove();
             }
         };
         
@@ -227,8 +245,20 @@ class OptimizedCollaborativeCanvas {
         const handleSubmit = () => {
             const inputValue = input.value.trim();
             
-            if (inputValue === '') {
+            // Validate minimum length like backend does
+            if (inputValue.length < 2) {
                 input.focus();
+                // Show error message if not already shown
+                const existingError = modalOverlay.querySelector('.validation-error');
+                if (!existingError) {
+                    const errorMsg = document.createElement('p');
+                    errorMsg.className = 'validation-error';
+                    errorMsg.style.color = '#ef4444';
+                    errorMsg.style.fontSize = '12px';
+                    errorMsg.style.marginTop = '5px';
+                    errorMsg.textContent = 'Name must be at least 2 characters long';
+                    input.parentNode.appendChild(errorMsg);
+                }
                 return;
             }
             
@@ -310,17 +340,55 @@ class OptimizedCollaborativeCanvas {
         input.focus();
         input.select(); // highlight current text so they can type over it
         
+        // Add real-time validation feedback like the initial modal
+        const updateButton = () => {
+            const value = input.value.trim();
+            const confirmBtn = document.getElementById('changeNicknameConfirm');
+            const isValid = value.length >= 2;
+            
+            confirmBtn.disabled = !isValid;
+            confirmBtn.textContent = isValid ? 'Update' : 'Update';
+            
+            // Show/hide validation error
+            const existingError = modalOverlay.querySelector('.validation-error');
+            if (!isValid && value.length > 0 && value.length < 2) {
+                if (!existingError) {
+                    const errorMsg = document.createElement('p');
+                    errorMsg.className = 'validation-error';
+                    errorMsg.style.color = '#ef4444';
+                    errorMsg.style.fontSize = '12px';
+                    errorMsg.style.marginTop = '5px';
+                    errorMsg.textContent = 'Name must be at least 2 characters long';
+                    input.parentNode.appendChild(errorMsg);
+                }
+            } else if (existingError) {
+                existingError.remove();
+            }
+        };
+        
+        input.addEventListener('input', updateButton);
+        updateButton(); // Check initial state
+        
         const handleUpdate = () => {
             const inputValue = input.value.trim();
-            let newNickname = 'Anonymous';
             
-            if (inputValue !== '') {
-                newNickname = this.sanitizeInput(inputValue).substring(0, 20);
-            } else {
-                // can't have empty names
+            // Enforce the same validation as initial nickname registration
+            if (inputValue === '' || inputValue.length < 2) {
+                // Show validation error
                 input.focus();
+                const errorMsg = modalOverlay.querySelector('.validation-error') || document.createElement('p');
+                if (!modalOverlay.querySelector('.validation-error')) {
+                    errorMsg.className = 'validation-error';
+                    errorMsg.style.color = '#ef4444';
+                    errorMsg.style.fontSize = '12px';
+                    errorMsg.style.marginTop = '5px';
+                    errorMsg.textContent = 'Name must be at least 2 characters long';
+                    input.parentNode.appendChild(errorMsg);
+                }
                 return;
             }
+
+            const newNickname = this.sanitizeInput(inputValue).substring(0, 20);
             
             if (newNickname !== this.nickname) {
                 const oldNickname = this.nickname;
@@ -577,10 +645,6 @@ class OptimizedCollaborativeCanvas {
 
         this.socket.on('user-info-update', (data) => {
             this.handleUserInfoUpdate(data);
-        });
-
-        this.socket.on('chat-message', (data) => {
-            this.addChatMessage(data);
         });
 
         this.socket.on('webrtc-signal', (data) => {
@@ -1055,10 +1119,46 @@ class OptimizedCollaborativeCanvas {
         const now = Date.now();
         // Only save if there's been recent activity and connection is stable
         if (this.socket && this.socket.connected && (now - this.lastCanvasSave > 25000)) {
-            this.lastCanvasSave = now;
-            this.socket.emit('canvas-state', {
-                imageData: this.canvas.toDataURL('image/jpeg', 0.8)
-            });
+            try {
+                // Ensure we have valid canvas content before saving
+                const canvas = this.canvas;
+                if (!canvas || canvas.width === 0 || canvas.height === 0) {
+                    console.warn('Invalid canvas state - skipping save');
+                    return;
+                }
+                
+                // Check if the canvas has actual content (not just white background)
+                const imageData = this.ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const pixels = imageData.data;
+                let hasContent = false;
+                
+                // Check for non-white pixels (skip alpha channel check for performance)
+                for (let i = 0; i < pixels.length; i += 4) {
+                    if (pixels[i] !== 255 || pixels[i + 1] !== 255 || pixels[i + 2] !== 255) {
+                        hasContent = true;
+                        break;
+                    }
+                }
+                
+                // Always save, but log if no content
+                if (!hasContent) {
+                    console.log('Saving empty canvas state');
+                }
+                
+                const dataURL = canvas.toDataURL('image/jpeg', 0.8);
+                this.lastCanvasSave = now;
+                
+                this.socket.emit('canvas-state', {
+                    imageData: dataURL,
+                    timestamp: now,
+                    hasContent: hasContent
+                });
+                
+                console.log('Canvas state saved', { hasContent, size: dataURL.length });
+                
+            } catch (error) {
+                console.error('Error saving canvas state:', error);
+            }
         }
     }
 
@@ -1213,18 +1313,8 @@ class OptimizedCollaborativeCanvas {
         if (message === '') return;
         
         const sanitizedMessage = this.sanitizeInput(message);
-        const chatData = {
-            type: 'chat-message',
-            userId: this.userId,
-            nickname: this.nickname,
-            message: sanitizedMessage,
-            timestamp: Date.now()
-        };
         
-        // Add to local chat immediately for better UX
-        this.addChatMessage(chatData);
-        
-        // Send via WebSocket for reliability
+        // Send via WebSocket for reliability - don't add locally, let server broadcast back
         if (this.socket && this.socket.connected) {
             this.socket.emit('chat-message', { message: sanitizedMessage });
         }
@@ -1261,8 +1351,12 @@ class OptimizedCollaborativeCanvas {
         console.log('Data:', data);
         
         try {
-            // Clear canvas first
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            // Don't apply canvas state if user is currently drawing to prevent interrupting strokes
+            if (this.isDrawing) {
+                console.log('User is currently drawing - deferring canvas state update');
+                setTimeout(() => this.applyCanvasState(data), 100);
+                return;
+            }
             
             // Check if this is an empty room (no saved state)
             if (data.isEmpty || !data.data) {
@@ -1282,14 +1376,33 @@ class OptimizedCollaborativeCanvas {
             
             console.log('Loading server canvas state...');
             const img = new Image();
+            
             img.onload = () => {
-                // Set white background first
-                this.ctx.fillStyle = '#ffffff';
-                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                
-                // Draw the server canvas state
-                this.ctx.drawImage(img, 0, 0, this.canvasWidth, this.canvasHeight);
-                console.log('✅ Server canvas state applied successfully');
+                try {
+                    // Double-check user isn't drawing right now
+                    if (this.isDrawing) {
+                        console.log('User started drawing while loading state - skipping update');
+                        return;
+                    }
+                    
+                    // Create a backup of current canvas before applying new state
+                    const currentState = this.canvas.toDataURL();
+                    
+                    // Clear and set white background first
+                    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    
+                    // Draw the server canvas state
+                    this.ctx.drawImage(img, 0, 0, this.canvasWidth, this.canvasHeight);
+                    console.log('✅ Server canvas state applied successfully');
+                    
+                } catch (error) {
+                    console.error('Error in img.onload:', error);
+                    // Restore white background on error
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                }
             };
             
             img.onerror = (error) => {
@@ -1554,11 +1667,23 @@ class OptimizedCollaborativeCanvas {
         this.currentPath = [];
         this.currentStrokeId = null;
         
-        // Send canvas state to WebSocket for persistence
+        // Send canvas state to WebSocket for persistence (debounced)
         if (this.socket && this.socket.connected) {
-            this.socket.emit('canvas-state', {
-                imageData: this.canvas.toDataURL('image/jpeg', 0.8)
-            });
+            // Clear any existing save timeout
+            if (this.pendingCanvasSave) {
+                clearTimeout(this.pendingCanvasSave);
+            }
+            
+            // Debounce canvas saves to prevent excessive network traffic
+            this.pendingCanvasSave = setTimeout(() => {
+                if (this.socket && this.socket.connected) {
+                    this.socket.emit('canvas-state', {
+                        imageData: this.canvas.toDataURL('image/jpeg', 0.8),
+                        timestamp: Date.now()
+                    });
+                }
+                this.pendingCanvasSave = null;
+            }, 1000); // Save 1 second after last stroke
         }
     }
 
@@ -2117,7 +2242,7 @@ class OptimizedCollaborativeCanvas {
         
         document.body.appendChild(cursor);
         
-        // Update canvas cursor behavior
+        // Update canvas cursor behavior - keep cursor visible during drawing
         if (this.canvas) {
             this.canvas.addEventListener('mouseenter', () => {
                 cursor.style.display = 'block';
@@ -2133,6 +2258,8 @@ class OptimizedCollaborativeCanvas {
                 const rect = this.canvas.getBoundingClientRect();
                 cursor.style.left = e.clientX + 'px';
                 cursor.style.top = e.clientY + 'px';
+                // Keep cursor visible during drawing
+                cursor.style.display = 'block';
             });
         }
     }
@@ -2703,13 +2830,8 @@ class OptimizedCollaborativeCanvas {
     setTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         
-        // Update canvas background based on theme
-        const canvas = document.getElementById('drawingCanvas');
-        if (canvas && this.ctx) {
-            // Clear canvas and set new background
-            this.ctx.fillStyle = theme === 'light' ? '#ffffff' : '#ffffff';
-            this.ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
+        // Theme change should NOT affect canvas content - only UI colors
+        // The canvas background is always white regardless of theme
         
         // Dispatch theme change event for other components
         window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme } }));
