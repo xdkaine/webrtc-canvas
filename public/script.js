@@ -1583,7 +1583,8 @@ class OptimizedCollaborativeCanvas {
                 return originalRAF(() => {
                     // Small delay to prevent overwhelming Firefox's renderer
                     setTimeout(callback, 0);
-                });
+                // Call the callback directly to preserve RAF timing optimization
+                return originalRAF(callback);
             };
         // Use Firefox-specific requestAnimationFrame wrapper if needed
         // (No global override; use this.firefoxRequestAnimationFrame where needed)
