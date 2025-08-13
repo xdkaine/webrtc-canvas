@@ -1589,7 +1589,6 @@ class OptimizedCollaborativeCanvas {
         
         // Optimize canvas context for Firefox
         if (this.ctx) {
-            this.ctx.mozImageSmoothingEnabled = true;
             if (this.ctx.webkitImageSmoothingEnabled !== undefined) {
                 this.ctx.webkitImageSmoothingEnabled = true;
             }
