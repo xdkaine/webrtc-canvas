@@ -170,6 +170,7 @@ class SessionManager {
     }
     
     broadcastToAll(event, data, excludeUserId = null) {
+        // Broadcast to session members
         this.users.forEach((user, userId) => {
             if (userId !== excludeUserId) {
                 const socket = this.userSockets.get(userId);
@@ -178,6 +179,16 @@ class SessionManager {
                 }
             }
         });
+        
+        // Also broadcast certain events to anonymous browsers
+        const anonymousBrowserEvents = ['drawing-data', 'canvas-state', 'canvasCleared'];
+        if (anonymousBrowserEvents.includes(event) && this.anonymousBrowsers) {
+            this.anonymousBrowsers.forEach(socket => {
+                if (socket.connected) {
+                    socket.emit(event, data);
+                }
+            });
+        }
     }
     
     // Authoritative drawing validation and conflict resolution
@@ -453,6 +464,71 @@ io.on('connection', (socket) => {
         return true;
     };
     
+    // Anonymous browsing - allows viewing without joining session
+    socket.on('anonymous-browse', () => {
+        console.log('Anonymous browser connected');
+        
+        // Add socket to anonymous browsers list for receiving drawing events
+        if (!sessionManager.anonymousBrowsers) {
+            sessionManager.anonymousBrowsers = new Set();
+        }
+        sessionManager.anonymousBrowsers.add(socket);
+        
+        // Confirm anonymous browsing mode
+        socket.emit('anonymous-browse-confirmed');
+        
+        // Immediately send current canvas state to new anonymous browser
+        try {
+            const canvasState = canvasPersistence.getCanvasState();
+            if (canvasState) {
+                console.log('Sending canvas state to new anonymous browser');
+                socket.emit('canvas-state', { 
+                    data: canvasState,
+                    isServerState: true 
+                });
+            } else {
+                console.log('No saved state, sending empty state to new anonymous browser');
+                socket.emit('canvas-state', { 
+                    data: null,
+                    isServerState: true,
+                    isEmpty: true
+                });
+            }
+        } catch (error) {
+            console.error('Error sending canvas state to new anonymous browser:', error);
+        }
+        
+        // Clean up on disconnect
+        socket.on('disconnect', () => {
+            if (sessionManager.anonymousBrowsers) {
+                sessionManager.anonymousBrowsers.delete(socket);
+            }
+        });
+    });
+    
+    // Handle canvas state requests for anonymous browsers
+    socket.on('request-canvas-state-anonymous', () => {
+        try {
+            const canvasState = canvasPersistence.getCanvasState();
+            if (canvasState) {
+                console.log('Sending canvas state to anonymous browser');
+                socket.emit('canvas-state', { 
+                    data: canvasState,
+                    isServerState: true 
+                });
+            } else {
+                console.log('No saved state, sending empty state to anonymous browser');
+                socket.emit('canvas-state', { 
+                    data: null,
+                    isServerState: true,
+                    isEmpty: true
+                });
+            }
+        } catch (error) {
+            console.error('Error sending canvas state to anonymous browser:', error);
+        }
+    });
+
     // Join session - simplified to single canvas
     socket.on('join-session', (data) => {
         try {

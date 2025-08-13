@@ -1,6 +1,6 @@
 class OptimizedCollaborativeCanvas {
     constructor() {
-        // Wait for DOM to be ready before accessing elements
+        // gotta wait for the page to load first
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => this.initialize());
         } else {
@@ -23,36 +23,37 @@ class OptimizedCollaborativeCanvas {
         
         console.log('Canvas found and context initialized');
         
-        // WebRTC and networking
+        // all the networking stuff
         this.peers = new Map();
         this.dataChannels = new Map();
         this.socket = null;
-        this.connectionQuality = new Map(); // Track connection quality per peer
+        this.connectionQuality = new Map(); // keeping track of how good connections are
         
-        // User and session management - simplified for single canvas
+        // user stuff - keeping it simple with just one canvas
         this.userId = this.generateUserId();
-        this.nickname = null; // Will be set by modal
+        this.nickname = null; // gets set when user enters name
+        this.isAnonymousMode = false; // for people just browsing
         this.connectedUsers = new Map();
         this.remoteCursors = new Map();
-        this.remoteDrawingStates = new Map(); // Track drawing state per user
-        this.sessionJoinTime = null; // Track when we joined the session
+        this.remoteDrawingStates = new Map(); // what everyone else is drawing
+        this.sessionJoinTime = null; // when did we join this mess
         
-        // Drawing state
+        // drawing stuff
         this.isDrawing = false;
-        this.currentColor = '#000000'; // Black default color
+        this.currentColor = '#000000'; // starting with black
         this.currentSize = 5;
         this.currentPath = [];
-        this.clientSequence = 0; // Client sequence counter for conflict resolution
-        this.lastServerSequence = 0; // Track server sequence for validation
-        this.currentStrokeId = null; // Track current stroke for validation
-        this.unreadCount = 0; // Track unread chat messages
+        this.clientSequence = 0; // for keeping drawings in order
+        this.lastServerSequence = 0; // server validation stuff
+        this.currentStrokeId = null; // current stroke tracking
+        this.unreadCount = 0; // chat badge counter
         
-        // Drawing performance optimization
-        this.drawThrottleMs = 16; // ~60fps
+        // performance stuff - trying to keep it smooth
+        this.drawThrottleMs = 16; // targeting 60fps
         this.lastDrawTime = 0;
         this.pendingDrawData = null;
         
-        // Optimized buffering system
+        // buffering to batch messages
         this.drawingBuffer = [];
         this.chatBuffer = [];
         this.bufferTimers = {
@@ -60,11 +61,11 @@ class OptimizedCollaborativeCanvas {
             chat: null
         };
         
-        // Canvas dimensions for coordinate normalization - Made larger as requested
-        this.canvasWidth = 2000;  // Updated to match HTML
-        this.canvasHeight = 1200;  // Updated to match HTML
+        // canvas size - made it bigger after user feedback
+        this.canvasWidth = 2000;  
+        this.canvasHeight = 1200; 
         
-        // Performance monitoring
+        // keeping track of performance 
         this.stats = {
             messagesPerSecond: 0,
             messageCount: 0,
@@ -73,40 +74,45 @@ class OptimizedCollaborativeCanvas {
             latencySamples: []
         };
         
-        // Drawing throttling for better performance
+        // throttling drawing for smoother experience
         this.lastDrawTime = 0;
-        this.drawThrottleMs = 16; // ~60fps max
+        this.drawThrottleMs = 16; // max 60fps
         this.pendingDrawData = null;
         
-        // Connection state
+        // connection tracking
         this.connectionState = 'disconnected';
         this.lastPingTime = 0;
         this.pingInterval = null;
         
-        // Canvas auto-save mechanism
+        // auto-save stuff
         this.autoSaveInterval = null;
         this.lastCanvasSave = 0;
         
-        // Initialize essential components first
+        // setting everything up
         this.initializeCanvas();
+        this.addCanvasBlur(); // start with blur effect
+        this.disableDrawingControls(); // no touching until you join
         this.initializeControls();
         this.initializeUserInterface();
         this.initializeChat();
         this.initializeCanvasPanning();
         this.initializeThemeSystem();
         
-        // Set initial drawing properties
+        // setting up drawing defaults
         this.updateDrawingProperties();
         
-        // Update color display to show black as default
+        // make sure color shows as black
         this.updateColorDisplay(this.currentColor);
         
-        // Initialize brush preview and cursor
+        // brush preview setup
         this.updateBrushPreview();
         
-        // Show nickname modal after essential UI is ready
+        // start getting drawing data right away so people can see preview
+        this.initializeWebSocketForBrowsing();
+
+        // show the name modal once everything's ready
         requestAnimationFrame(() => {
-            // Hide loading screen and show main app
+            // fade out loading screen
             const loader = document.getElementById('initialLoader');
             const mainApp = document.getElementById('mainApp');
             
@@ -116,7 +122,7 @@ class OptimizedCollaborativeCanvas {
                     loader.style.display = 'none';
                     if (mainApp) {
                         mainApp.style.display = 'grid';
-                        // Small delay to ensure smooth transition
+                        // tiny delay for smooth transition
                         setTimeout(() => {
                             this.showNicknameModal();
                         }, 100);
@@ -129,7 +135,7 @@ class OptimizedCollaborativeCanvas {
     }
 
     generateUserId() {
-        // Generate tab-specific user ID with timestamp for uniqueness
+        // make a unique ID for this browser tab
         const tabId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
         return 'user_' + tabId;
     }
@@ -165,7 +171,7 @@ class OptimizedCollaborativeCanvas {
             <div class="modal-content">
                 <div class="modal-header">
                     <h3>Welcome to Collaborative Canvas!</h3>
-                    <p>Please enter your name to join the canvas</p>
+                    <p>Please enter your name to join the canvas and start drawing</p>
                 </div>
                 <div class="modal-body">
                     <input type="text" id="nicknameInput" class="nickname-input" 
@@ -174,6 +180,7 @@ class OptimizedCollaborativeCanvas {
                 </div>
                 <div class="modal-footer">
                     <button id="nicknameConfirm" class="btn-primary" disabled>Join Canvas</button>
+                    <button id="browseAnonymously" class="btn-secondary">Browse Anonymously</button>
                 </div>
             </div>
         `;
@@ -184,10 +191,10 @@ class OptimizedCollaborativeCanvas {
         const input = document.getElementById('nicknameInput');
         const confirmBtn = document.getElementById('nicknameConfirm');
         
-        // Immediate focus for better UX
+        // get cursor in there right away
         input.focus();
         
-        // Optimized input handler with reduced debounce for faster response
+        // update button as user types, but don't hammer it
         let inputTimeout;
         let lastValue = '';
         
@@ -214,7 +221,7 @@ class OptimizedCollaborativeCanvas {
             clearTimeout(inputTimeout);
             inputTimeout = setTimeout(() => {
                 updateButton(currentValue);
-            }, 50); // Very fast response for better UX
+            }, 50); // quick but not too quick
         });
         
         const handleSubmit = () => {
@@ -226,19 +233,47 @@ class OptimizedCollaborativeCanvas {
             }
             
             this.nickname = this.sanitizeInput(inputValue).substring(0, 20);
+            this.isAnonymousMode = false; // joining properly now
             document.body.removeChild(modalOverlay);
             
-            // Show chat bubble now that user has a nickname
+            // turn off blur, enable everything, show chat
+            this.removeCanvasBlur();
+            this.enableDrawingControls();
             this.showChatBubble();
             
-            // Initialize networking components after nickname is set
-            this.initializeWebSocket();
-            this.initializeWebRTC();
+            // we might already be connected from browsing mode
+            if (this.socket && this.socket.connected) {
+                // already connected, just need to upgrade to full member
+                this.addFullSessionEventHandlers();
+                this.joinSession();
+                this.initializeWebRTC();
+            } else {
+                // fresh start
+                this.initializeWebSocket();
+                this.initializeWebRTC();
+            }
+            
             this.startPerformanceMonitoring();
             this.startAutoSave();
         };
         
+        const browseAnonymouslyBtn = document.getElementById('browseAnonymously');
+        
+        const handleBrowseAnonymously = () => {
+            this.nickname = null; // just watching
+            this.isAnonymousMode = true; // viewer mode
+            document.body.removeChild(modalOverlay);
+            
+            // turn off blur but leave controls disabled
+            this.removeCanvasBlur();
+            // drawing stays disabled for anonymous people
+            
+            // already connected for browsing from init
+            console.log('staying in browse mode');
+        };
+        
         confirmBtn.addEventListener('click', handleSubmit);
+        browseAnonymouslyBtn.addEventListener('click', handleBrowseAnonymously);
         
         input.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !confirmBtn.disabled) {
@@ -260,7 +295,7 @@ class OptimizedCollaborativeCanvas {
                 <div class="modal-body">
                     <input type="text" id="changeNicknameInput" class="nickname-input" 
                            value="${this.nickname}" maxlength="20" autocomplete="off">
-                    <p class="modal-hint">Your new nickname will be visible to others immediately</p>
+                    <p class="modal-hint">your new name shows up right away</p>
                 </div>
                 <div class="modal-footer">
                     <button id="changeNicknameCancel" class="btn-secondary">Cancel</button>
@@ -273,7 +308,7 @@ class OptimizedCollaborativeCanvas {
         
         const input = document.getElementById('changeNicknameInput');
         input.focus();
-        input.select(); // Select current text for easy replacement
+        input.select(); // highlight current text so they can type over it
         
         const handleUpdate = () => {
             const inputValue = input.value.trim();
@@ -282,7 +317,7 @@ class OptimizedCollaborativeCanvas {
             if (inputValue !== '') {
                 newNickname = this.sanitizeInput(inputValue).substring(0, 20);
             } else {
-                // Don't allow empty nicknames
+                // can't have empty names
                 input.focus();
                 return;
             }
@@ -291,10 +326,10 @@ class OptimizedCollaborativeCanvas {
                 const oldNickname = this.nickname;
                 this.nickname = newNickname;
                 
-                // Update the UI immediately
+                // update everything right away
                 this.updateUsersList();
                 
-                // Notify other users about the nickname change
+                // tell everyone about the change
                 if (this.socket && this.socket.connected) {
                     this.socket.emit('user-info-update', {
                         userId: this.userId,
@@ -303,7 +338,7 @@ class OptimizedCollaborativeCanvas {
                     });
                 }
                 
-                this.showNotification(`Nickname changed from "${oldNickname}" to "${newNickname}"`, 'success');
+                this.showNotification(`changed from "${oldNickname}" to "${newNickname}"`, 'success');
             }
             
             document.body.removeChild(modalOverlay);
@@ -323,10 +358,10 @@ class OptimizedCollaborativeCanvas {
         });
     }
 
-    // Optimized WebSocket initialization with better error handling
+    // socket connection setup with retry logic
     initializeWebSocket() {
         try {
-            // Initialize Socket.IO with optimized settings
+            // start up socket.io with good settings
             this.socket = io({
                 transports: ['websocket', 'polling'],
                 upgrade: true,
@@ -343,15 +378,40 @@ class OptimizedCollaborativeCanvas {
 
             this.setupSocketEventHandlers();
         } catch (error) {
-            console.error('Failed to initialize WebSocket:', error);
+            console.error('socket setup went wrong:', error);
+            this.updateConnectionStatus('error');
+        }
+    }
+
+    // lighter connection just for watching
+    initializeWebSocketForBrowsing() {
+        try {
+            // socket.io setup but simpler
+            this.socket = io({
+                transports: ['websocket', 'polling'],
+                upgrade: true,
+                rememberUpgrade: true,
+                timeout: 20000,
+                forceNew: false,
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                maxReconnectionAttempts: 10,
+                randomizationFactor: 0.5
+            });
+
+            this.setupSocketEventHandlersForBrowsing();
+        } catch (error) {
+            console.error('browsing socket failed:', error);
             this.updateConnectionStatus('error');
         }
     }
 
     setupSocketEventHandlers() {
-        // Connection events
+        // when we connect
         this.socket.on('connect', () => {
-            console.log('WebSocket connected');
+            console.log('connected to server');
             this.connectionState = 'connected';
             this.updateConnectionStatus('connected');
             this.startHeartbeat();
@@ -359,47 +419,47 @@ class OptimizedCollaborativeCanvas {
         });
 
         this.socket.on('disconnect', (reason) => {
-            console.log('WebSocket disconnected:', reason);
+            console.log('got disconnected:', reason);
             this.connectionState = 'disconnected';
             this.updateConnectionStatus('disconnected');
             this.stopHeartbeat();
         });
 
         this.socket.on('reconnect', (attemptNumber) => {
-            console.log('WebSocket reconnected after', attemptNumber, 'attempts');
+            console.log('back online after', attemptNumber, 'attempts');
             this.connectionState = 'connected';
             this.updateConnectionStatus('connected');
             this.joinSession();
         });
 
         this.socket.on('connect_error', (error) => {
-            console.error('WebSocket connection error:', error);
+            console.error('connection screwed up:', error);
             this.connectionState = 'error';
             this.updateConnectionStatus('error');
         });
 
-        // Session events
+        // session stuff
         this.socket.on('session-joined', (data) => {
-            console.log('Joined session:', data);
+            console.log('we\'re in:', data);
             this.handleSessionJoined(data);
         });
 
         this.socket.on('user-joined', (data) => {
-            console.log('User joined:', data);
+            console.log('someone joined:', data);
             this.handleUserJoined(data);
         });
 
         this.socket.on('user-left', (data) => {
-            console.log('User left:', data);
+            console.log('someone left:', data);
             this.handleUserLeft(data);
         });
 
-        // WebRTC signaling
+        // webrtc handshake stuff
         this.socket.on('webrtc-signal', (data) => {
             this.handleWebRTCSignal(data);
         });
 
-        // Real-time data
+        // drawing data coming in
         this.socket.on('drawing-data', (data) => {
             this.handleRemoteDrawing(data);
         });
@@ -409,7 +469,7 @@ class OptimizedCollaborativeCanvas {
         });
 
         this.socket.on('chat-message', (data) => {
-            // Only add chat message if it's not from this user (to prevent duplicates)
+            // don't show our own messages twice
             if (data.userId !== this.userId) {
                 this.addChatMessage(data);
             }
@@ -435,7 +495,7 @@ class OptimizedCollaborativeCanvas {
             this.handleUserInfoUpdate(data);
         });
 
-        // Heartbeat
+        // keep alive ping pong
         this.socket.on('pong', () => {
             if (this.lastPingTime > 0) {
                 const latency = Date.now() - this.lastPingTime;
@@ -443,24 +503,122 @@ class OptimizedCollaborativeCanvas {
             }
         });
 
-        // Error handling
+        // when things go wrong
         this.socket.on('error', (error) => {
-            console.error('Socket error:', error);
+            console.error('socket error:', error);
             if (error.message) {
                 this.showNotification(error.message, 'error');
             }
         });
     }
 
-    // Simplified session joining for single canvas
+    // simplified handlers for just watching
+    setupSocketEventHandlersForBrowsing() {
+        // connection stuff
+        this.socket.on('connect', () => {
+            console.log('connected for browsing');
+            this.updateConnectionStatus('connected');
+            // tell server we're just watching
+            this.socket.emit('anonymous-browse');
+        });
+
+        this.socket.on('disconnect', () => {
+            console.log('disconnected while browsing');
+            this.updateConnectionStatus('disconnected');
+        });
+
+        // just receive drawing data
+        this.socket.on('drawing-data', (data) => {
+            this.handleRemoteDrawing(data.data);
+        });
+
+        // canvas updates
+        this.socket.on('canvas-state', (data) => {
+            this.applyCanvasState(data);
+        });
+
+        this.socket.on('canvasCleared', () => {
+            this.clearCanvas();
+        });
+
+        // server confirms we're browsing
+        this.socket.on('anonymous-browse-confirmed', () => {
+            console.log('browse mode confirmed');
+            // server will send us canvas state
+        });
+
+        // errors while browsing
+        this.socket.on('error', (error) => {
+            console.error('socket error while browsing:', error);
+        });
+    }
+
+    // upgrade from browse mode to full member
+    addFullSessionEventHandlers() {
+        if (!this.socket) return;
+        
+        console.log('adding full session handlers...');
+        
+        // session management
+        this.socket.on('session-joined', (data) => {
+            console.log('we joined the session:', data);
+            this.handleSessionJoined(data);
+        });
+
+        this.socket.on('user-joined', (data) => {
+            console.log('someone else joined:', data);
+            this.handleUserJoined(data);
+        });
+
+        this.socket.on('user-left', (data) => {
+            console.log('someone left:', data);
+            this.handleUserLeft(data);
+        });
+
+        this.socket.on('user-info-update', (data) => {
+            this.handleUserInfoUpdate(data);
+        });
+
+        this.socket.on('chat-message', (data) => {
+            this.addChatMessage(data);
+        });
+
+        this.socket.on('webrtc-signal', (data) => {
+            this.handleWebRTCSignal(data);
+        });
+
+        this.socket.on('cursor-position', (data) => {
+            this.updateRemoteCursor(data);
+        });
+
+        // ping pong to check latency
+        this.socket.on('pong', () => {
+            if (this.lastPingTime > 0) {
+                const latency = Date.now() - this.lastPingTime;
+                this.updateLatencyStats(latency);
+            }
+        });
+    }
+
+    requestCanvasState() {
+        if (!this.socket || !this.socket.connected) {
+            console.warn('can\'t request canvas - no connection');
+            return;
+        }
+        
+        console.log('asking server for canvas state...');
+        this.socket.emit('request-canvas-state');
+    }
+
+    // join the drawing session properly
     joinSession() {
         if (!this.socket || !this.socket.connected) {
-            console.warn('Cannot join session: socket not connected');
+            console.warn('can\'t join - not connected');
             return;
         }
         
         if (!this.nickname) {
-            console.warn('Cannot join session: nickname not set');
+            console.warn('can\'t join - no nickname set');
             return;
         }
 
@@ -471,41 +629,41 @@ class OptimizedCollaborativeCanvas {
     }
 
     handleSessionJoined(data) {
-        console.log('=== SESSION JOINED ===');
-        console.log('Users:', data.userCount);
+        console.log('=== WE\'RE IN THE SESSION ===');
+        console.log('users online:', data.userCount);
         
-        // Track when we joined the session
+        // remember when we joined
         this.sessionJoinTime = Date.now();
         
-        // Reset sequence numbers for fresh session
+        // reset counters for fresh start
         this.clientSequence = 0;
         this.lastServerSequence = 0;
         
         this.updateUserCount(data.userCount);
         
-        // Update connected users
+        // connect to everyone who's already here
         data.users.forEach(user => {
             if (user.userId !== this.userId) {
                 this.connectedUsers.set(user.userId, user);
-                // Initiate WebRTC connection for existing users
+                // start webrtc with existing users
                 this.createPeerConnection(user.userId, true);
             }
         });
         
         this.updateUsersList();
         
-        // Wait for server to send canvas state
-        console.log('Waiting for server to send canvas state...');
+        // server should send us the canvas
+        console.log('waiting for canvas data...');
         
-        // Set a timeout to request canvas state if we don't receive it
+        // just in case server doesn't send it
         setTimeout(() => {
-            console.log('Canvas state timeout - requesting from server...');
+            console.log('canvas timeout - asking server again...');
             if (this.socket && this.socket.connected) {
                 this.socket.emit('request-canvas-state');
             }
-        }, 3000); // Wait 3 seconds for canvas state
+        }, 3000); // give it 3 seconds
         
-        this.showNotification(`Joined canvas with ${data.userCount} users`, 'success');
+        this.showNotification(`joined with ${data.userCount} people`, 'success');
     }
 
     handleUserJoined(data) {
@@ -514,8 +672,8 @@ class OptimizedCollaborativeCanvas {
             this.updateUsersList();
             this.updateUserCount(data.userCount);
             
-            // Create WebRTC connection for new user
-            this.createPeerConnection(data.userId, false); // They will initiate
+            // start webrtc with the new person
+            this.createPeerConnection(data.userId, false); // they'll start it
             
             this.showNotification(`${data.nickname} joined`, 'info');
         }
@@ -528,7 +686,7 @@ class OptimizedCollaborativeCanvas {
             this.updateUsersList();
             
             const user = this.connectedUsers.get(data.userId);
-            const nickname = user ? user.nickname : 'User';
+            const nickname = user ? user.nickname : 'someone';
             this.showNotification(`${nickname} left`, 'info');
         }
     }
@@ -538,22 +696,22 @@ class OptimizedCollaborativeCanvas {
             const user = this.connectedUsers.get(data.userId);
             const oldNickname = user.nickname;
             
-            // Update user info
+            // update their info
             user.nickname = data.nickname;
             user.lastSeen = data.timestamp;
             
-            // Update the UI
+            // refresh the UI
             this.updateUsersList();
             
-            // Update cursor label for this user
+            // fix their cursor label too
             this.updateCursorLabel(data.userId, data.nickname);
             
-            // Show notification about nickname change
-            this.showNotification(`${oldNickname} is now known as ${data.nickname}`, 'info');
+            // let everyone know
+            this.showNotification(`${oldNickname} is now ${data.nickname}`, 'info');
         }
     }
 
-    // Enhanced WebRTC with better ICE configuration
+    // webrtc setup with good servers
     initializeWebRTC() {
         this.rtcConfig = {
             iceServers: [
@@ -1248,6 +1406,11 @@ class OptimizedCollaborativeCanvas {
     }
 
     startDrawing(e) {
+        // Prevent drawing in anonymous mode
+        if (this.isAnonymousMode) {
+            return;
+        }
+        
         this.isDrawing = true;
         const coords = this.getCanvasCoordinates(e);
         this.clientSequence++;
@@ -1335,6 +1498,39 @@ class OptimizedCollaborativeCanvas {
             sequence: this.clientSequence,
             timestamp: Date.now()
         });
+    }
+
+    addCanvasBlur() {
+        const canvasContainer = document.querySelector('.canvas-container');
+        if (canvasContainer) {
+            canvasContainer.style.filter = 'blur(8px)';
+            canvasContainer.style.opacity = '0.7';
+            canvasContainer.style.transition = 'filter 0.3s ease, opacity 0.3s ease';
+        }
+    }
+
+    removeCanvasBlur() {
+        const canvasContainer = document.querySelector('.canvas-container');
+        if (canvasContainer) {
+            canvasContainer.style.filter = 'none';
+            canvasContainer.style.opacity = '1';
+        }
+    }
+
+    disableDrawingControls() {
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) {
+            sidebar.style.pointerEvents = 'none';
+            sidebar.style.opacity = '0.5';
+        }
+    }
+
+    enableDrawingControls() {
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) {
+            sidebar.style.pointerEvents = 'auto';
+            sidebar.style.opacity = '1';
+        }
     }
 
     stopDrawing() {
