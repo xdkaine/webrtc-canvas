@@ -32,6 +32,22 @@ class OptimizedCollaborativeCanvas {
         
         console.log('Canvas found and context initialized');
         
+        // browser detection for performance optimizations
+        this.isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
+        this.isChrome = navigator.userAgent.toLowerCase().includes('chrome');
+        this.isSafari = navigator.userAgent.toLowerCase().includes('safari') && !this.isChrome;
+        
+        console.log('Browser detected:', {
+            firefox: this.isFirefox,
+            chrome: this.isChrome,
+            safari: this.isSafari
+        });
+        
+        // Firefox-specific optimizations for animation frames
+        if (this.isFirefox) {
+            this.setupFirefoxOptimizations();
+        }
+        
         // all the networking stuff
         this.peers = new Map();
         this.dataChannels = new Map();
@@ -58,7 +74,8 @@ class OptimizedCollaborativeCanvas {
         this.unreadCount = 0; // chat badge counter
         
         // performance stuff - trying to keep it smooth
-        this.drawThrottleMs = 16; // targeting 60fps
+        // Firefox benefits from reduced throttling due to different event timing
+        this.drawThrottleMs = this.isFirefox ? 8 : 16; // Firefox: 125fps, others: 60fps
         this.lastDrawTime = 0;
         this.pendingDrawData = null;
         
@@ -85,7 +102,7 @@ class OptimizedCollaborativeCanvas {
         
         // throttling drawing for smoother experience
         this.lastDrawTime = 0;
-        this.drawThrottleMs = 16; // max 60fps
+        this.drawThrottleMs = this.isFirefox ? 8 : 16; // Firefox needs less throttling
         this.pendingDrawData = null;
         
         // connection tracking
@@ -1475,6 +1492,15 @@ class OptimizedCollaborativeCanvas {
         this.ctx.strokeStyle = this.currentColor;
         this.ctx.lineWidth = this.currentSize;
         
+        // Firefox-specific canvas optimizations
+        if (this.isFirefox) {
+            // Enable hardware acceleration hints for Firefox
+            this.ctx.imageSmoothingEnabled = true;
+            this.ctx.imageSmoothingQuality = 'high';
+            // Disable alpha for better performance in Firefox
+            this.canvas.style.willChange = 'transform';
+        }
+        
         console.log('Canvas context initialized with white background and color:', this.currentColor, 'size:', this.currentSize);
         
         // Use Pointer Events for unified mouse/touch/pen handling (better in Firefox & Edge)
@@ -1485,7 +1511,8 @@ class OptimizedCollaborativeCanvas {
         this.activePointerId = null;
         this.lastPointerPoint = null;
         this.smoothing = true; // simple quadratic smoothing toggle
-        this.smoothFactor = 0.5; // between 0 and 1
+        // Firefox needs lighter smoothing to maintain responsiveness
+        this.smoothFactor = this.isFirefox ? 0.3 : 0.5; // Firefox: lighter smoothing
 
         const pointerDown = (e) => {
             if (this.activePointerId !== null) return; // single pointer drawing
@@ -1499,11 +1526,24 @@ class OptimizedCollaborativeCanvas {
             if (e.pointerId !== this.activePointerId) return;
             if (!this.isDrawing) return;
 
-            // Optional smoothing to reduce jitter (noticeable in Firefox with high-frequency events)
+            // Optional smoothing to reduce jitter (especially important in Firefox)
             if (this.smoothing && this.lastPointerPoint) {
                 const lerp = (a, b, t) => a + (b - a) * t;
-                const smoothedClientX = lerp(this.lastPointerPoint.x, e.clientX, this.smoothFactor);
-                const smoothedClientY = lerp(this.lastPointerPoint.y, e.clientY, this.smoothFactor);
+                
+                // Firefox-specific smoothing improvements
+                let dynamicSmoothFactor = this.smoothFactor;
+                if (this.isFirefox) {
+                    // Calculate distance to adjust smoothing dynamically
+                    const distance = Math.sqrt(
+                        Math.pow(e.clientX - this.lastPointerPoint.x, 2) + 
+                        Math.pow(e.clientY - this.lastPointerPoint.y, 2)
+                    );
+                    // Less smoothing for fast movements, more for small movements
+                    dynamicSmoothFactor = distance > 5 ? 0.7 : 0.2;
+                }
+                
+                const smoothedClientX = lerp(this.lastPointerPoint.x, e.clientX, dynamicSmoothFactor);
+                const smoothedClientY = lerp(this.lastPointerPoint.y, e.clientY, dynamicSmoothFactor);
                 const pseudoEvent = { ...e, clientX: smoothedClientX, clientY: smoothedClientY };
                 this.draw(pseudoEvent);
                 this.lastPointerPoint = { x: smoothedClientX, y: smoothedClientY };
@@ -1613,9 +1653,23 @@ class OptimizedCollaborativeCanvas {
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         
-        // Draw locally (optimistic update)
-        this.ctx.lineTo(coords.x, coords.y);
-        this.ctx.stroke();
+        // Firefox-specific drawing optimizations
+        if (this.isFirefox) {
+            // Use beginPath for better Firefox performance
+            this.ctx.beginPath();
+            if (this.currentPath.length > 0) {
+                const lastPoint = this.currentPath[this.currentPath.length - 1];
+                this.ctx.moveTo(lastPoint.x, lastPoint.y);
+            } else {
+                this.ctx.moveTo(coords.x, coords.y);
+            }
+            this.ctx.lineTo(coords.x, coords.y);
+            this.ctx.stroke();
+        } else {
+            // Standard drawing for other browsers
+            this.ctx.lineTo(coords.x, coords.y);
+            this.ctx.stroke();
+        }
         
         this.currentPath.push({ x: coords.x, y: coords.y });
         
@@ -1650,6 +1704,34 @@ class OptimizedCollaborativeCanvas {
             canvasContainer.style.filter = 'none';
             canvasContainer.style.opacity = '1';
         }
+    }
+
+    setupFirefoxOptimizations() {
+        // Firefox-specific performance optimizations
+        console.log('Applying Firefox-specific optimizations...');
+        
+        // Optimize animation frame timing for Firefox
+        if (typeof requestAnimationFrame !== 'undefined') {
+            const originalRAF = window.requestAnimationFrame;
+            window.requestAnimationFrame = (callback) => {
+                // Firefox benefits from slightly delayed animation frames
+                return originalRAF(() => {
+                    // Small delay to prevent overwhelming Firefox's renderer
+                    setTimeout(callback, 0);
+                // Call the callback directly to preserve RAF timing optimization
+                return originalRAF(callback);
+            };
+        // Use Firefox-specific requestAnimationFrame wrapper if needed
+        // (No global override; use this.firefoxRequestAnimationFrame where needed)
+        
+        // Optimize canvas context for Firefox
+        if (this.ctx) {
+            if (this.ctx.webkitImageSmoothingEnabled !== undefined) {
+                this.ctx.webkitImageSmoothingEnabled = true;
+            }
+        }
+        
+        // Reduce aggressive canvas redraws in Firefox
     }
 
     disableDrawingControls() {

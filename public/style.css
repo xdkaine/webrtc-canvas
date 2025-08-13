@@ -862,6 +862,27 @@ body {
   z-index: 2;
 }
 
+/* Firefox-specific optimizations */
+@-moz-document url-prefix() {
+  #drawingCanvas {
+    /* Enable hardware acceleration in Firefox */
+    transform: translateZ(0);
+    will-change: contents;
+    /* Improve rendering performance */
+    image-rendering: optimizeSpeed;
+  }
+  
+  .canvas-container {
+    /* Reduce repaints in Firefox */
+    contain: layout style paint;
+  }
+  
+  .canvas-frame {
+    /* Smoother scrolling in Firefox */
+    scroll-behavior: auto;
+  }
+}
+
 /* 13. Footer */
 .footer {
   color: var(--color-text-muted);
