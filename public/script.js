@@ -29,19 +29,27 @@ class OptimizedCollaborativeCanvas {
         this.socket = null;
         this.connectionQuality = new Map(); // Track connection quality per peer
         
-        // User and session management
+        // User and session management - simplified for single canvas
         this.userId = this.generateUserId();
-        this.nickname = this.getUserNickname();
-        this.sessionId = 'default';
+        this.nickname = null; // Will be set by modal
         this.connectedUsers = new Map();
         this.remoteCursors = new Map();
         this.remoteDrawingStates = new Map(); // Track drawing state per user
+        this.sessionJoinTime = null; // Track when we joined the session
         
         // Drawing state
         this.isDrawing = false;
-        this.currentColor = '#ffffff'; // White should be visible on dark canvas
+        this.currentColor = '#000000'; // Black default color
         this.currentSize = 5;
         this.currentPath = [];
+        this.clientSequence = 0; // Client sequence counter for conflict resolution
+        this.lastServerSequence = 0; // Track server sequence for validation
+        this.currentStrokeId = null; // Track current stroke for validation
+        
+        // Drawing performance optimization
+        this.drawThrottleMs = 16; // ~60fps
+        this.lastDrawTime = 0;
+        this.pendingDrawData = null;
         
         // Optimized buffering system
         this.drawingBuffer = [];
@@ -51,9 +59,9 @@ class OptimizedCollaborativeCanvas {
             chat: null
         };
         
-        // Canvas dimensions for coordinate normalization
-        this.canvasWidth = 1200;  // Match HTML canvas width
-        this.canvasHeight = 600;
+        // Canvas dimensions for coordinate normalization - Made larger as requested
+        this.canvasWidth = 2000;  // Updated to match HTML
+        this.canvasHeight = 1200;  // Updated to match HTML
         
         // Performance monitoring
         this.stats = {
@@ -64,35 +72,66 @@ class OptimizedCollaborativeCanvas {
             latencySamples: []
         };
         
+        // Drawing throttling for better performance
+        this.lastDrawTime = 0;
+        this.drawThrottleMs = 16; // ~60fps max
+        this.pendingDrawData = null;
+        
         // Connection state
         this.connectionState = 'disconnected';
         this.lastPingTime = 0;
         this.pingInterval = null;
         
-        // Initialize all the UI components
+        // Canvas auto-save mechanism
+        this.autoSaveInterval = null;
+        this.lastCanvasSave = 0;
+        
+        // Initialize essential components first
         this.initializeCanvas();
         this.initializeControls();
         this.initializeUserInterface();
         this.initializeChat();
-        this.initializeWebSocket();
-        this.initializeWebRTC();
-        this.startPerformanceMonitoring();
+        this.initializeDraggableComponents();
+        this.initializeCanvasPanning();
+        this.initializeThemeSystem();
         
         // Set initial drawing properties
         this.updateDrawingProperties();
+        
+        // Update color display to show black as default
+        this.updateColorDisplay(this.currentColor);
+        
+        // Initialize brush preview and cursor
+        this.updateBrushPreview();
+        
+        // Show nickname modal after essential UI is ready
+        requestAnimationFrame(() => {
+            // Hide loading screen and show main app
+            const loader = document.getElementById('initialLoader');
+            const mainApp = document.getElementById('mainApp');
+            
+            if (loader) {
+                loader.style.opacity = '0';
+                setTimeout(() => {
+                    loader.style.display = 'none';
+                    if (mainApp) {
+                        mainApp.style.display = 'grid';
+                        // Small delay to ensure smooth transition
+                        setTimeout(() => {
+                            this.showNicknameModal();
+                        }, 100);
+                    }
+                }, 300);
+            } else {
+                this.showNicknameModal();
+            }
+        });
     }
 
     generateUserId() {
         // Generate tab-specific user ID with timestamp for uniqueness
         const tabId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
         return 'user_' + tabId;
-    }
-
-    getUserNickname() {
-        // Always prompt for nickname in new tabs - no localStorage dependency
-        // This ensures each tab can have its own unique nickname
-        this.showNicknameModal();
-        return 'Anonymous'; // Temporary until modal completes
     }
 
     generateRandomNickname() {
@@ -115,67 +154,91 @@ class OptimizedCollaborativeCanvas {
     }
 
     showNicknameModal() {
+        // Create modal with minimal DOM operations for better performance
+        const fragment = document.createDocumentFragment();
+        
         const modalOverlay = document.createElement('div');
         modalOverlay.id = 'nicknameModal';
         modalOverlay.className = 'modal-overlay';
+        
         modalOverlay.innerHTML = `
             <div class="modal-content">
                 <div class="modal-header">
                     <h3>Welcome to Collaborative Canvas!</h3>
-                    <p>Choose your nickname for this tab</p>
+                    <p>Please enter your name to join the canvas</p>
                 </div>
                 <div class="modal-body">
                     <input type="text" id="nicknameInput" class="nickname-input" 
-                           placeholder="Enter your nickname" maxlength="20" autocomplete="off">
-                    <p class="modal-hint">Each tab can have a different name!</p>
+                           placeholder="Enter your name" maxlength="20" autocomplete="off" required>
+                    <p class="modal-hint">Your name will be visible to all other users on the canvas</p>
                 </div>
                 <div class="modal-footer">
-                    <button id="nicknameRandomize" class="btn-secondary">Random Name</button>
-                    <button id="nicknameConfirm" class="btn-primary">Join Canvas</button>
+                    <button id="nicknameConfirm" class="btn-primary" disabled>Join Canvas</button>
                 </div>
             </div>
         `;
         
-        document.body.appendChild(modalOverlay);
+        fragment.appendChild(modalOverlay);
+        document.body.appendChild(fragment);
         
         const input = document.getElementById('nicknameInput');
+        const confirmBtn = document.getElementById('nicknameConfirm');
+        
+        // Immediate focus for better UX
         input.focus();
         
-        // Generate a fun random name suggestion
-        const randomName = this.generateRandomNickname();
-        input.placeholder = `e.g., ${randomName}`;
+        // Optimized input handler with reduced debounce for faster response
+        let inputTimeout;
+        let lastValue = '';
         
-        const handleSubmit = () => {
-            const inputValue = input.value.trim();
-            let finalNickname = 'Anonymous';
+        const updateButton = (value) => {
+            const trimmedValue = value.trim();
+            const isValid = trimmedValue.length > 0;
             
-            if (inputValue !== '') {
-                finalNickname = this.sanitizeInput(inputValue).substring(0, 20);
-            } else {
-                // If empty, use a random name
-                finalNickname = randomName;
+            if (confirmBtn.disabled === isValid) {
+                confirmBtn.disabled = !isValid;
             }
             
-            this.nickname = finalNickname;
-            // Don't store in localStorage - keep it tab-specific
-            
-            document.body.removeChild(modalOverlay);
-            
-            // Connect after nickname is set
-            if (this.socket && this.socket.connected) {
-                this.joinSession();
+            const newText = isValid ? `Join as "${trimmedValue}"` : 'Join Canvas';
+            if (confirmBtn.textContent !== newText) {
+                confirmBtn.textContent = newText;
             }
         };
         
-        document.getElementById('nicknameConfirm').addEventListener('click', handleSubmit);
-        document.getElementById('nicknameRandomize').addEventListener('click', () => {
-            const newRandomName = this.generateRandomNickname();
-            input.value = newRandomName;
-            input.focus();
+        input.addEventListener('input', (e) => {
+            const currentValue = e.target.value;
+            
+            if (currentValue === lastValue) return;
+            lastValue = currentValue;
+            
+            clearTimeout(inputTimeout);
+            inputTimeout = setTimeout(() => {
+                updateButton(currentValue);
+            }, 50); // Very fast response for better UX
         });
         
+        const handleSubmit = () => {
+            const inputValue = input.value.trim();
+            
+            if (inputValue === '') {
+                input.focus();
+                return;
+            }
+            
+            this.nickname = this.sanitizeInput(inputValue).substring(0, 20);
+            document.body.removeChild(modalOverlay);
+            
+            // Initialize networking components after nickname is set
+            this.initializeWebSocket();
+            this.initializeWebRTC();
+            this.startPerformanceMonitoring();
+            this.startAutoSave();
+        };
+        
+        confirmBtn.addEventListener('click', handleSubmit);
+        
         input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !confirmBtn.disabled) {
                 handleSubmit();
             }
         });
@@ -215,6 +278,10 @@ class OptimizedCollaborativeCanvas {
             
             if (inputValue !== '') {
                 newNickname = this.sanitizeInput(inputValue).substring(0, 20);
+            } else {
+                // Don't allow empty nicknames
+                input.focus();
+                return;
             }
             
             if (newNickname !== this.nickname) {
@@ -334,6 +401,10 @@ class OptimizedCollaborativeCanvas {
             this.handleRemoteDrawing(data);
         });
 
+        this.socket.on('drawing-correction', (data) => {
+            this.handleDrawingCorrection(data);
+        });
+
         this.socket.on('chat-message', (data) => {
             // Only add chat message if it's not from this user (to prevent duplicates)
             if (data.userId !== this.userId) {
@@ -347,6 +418,10 @@ class OptimizedCollaborativeCanvas {
 
         this.socket.on('canvas-state', (data) => {
             this.applyCanvasState(data);
+        });
+
+        this.socket.on('drawing-history', (data) => {
+            this.handleDrawingHistory(data);
         });
 
         this.socket.on('cursor-position', (data) => {
@@ -374,21 +449,35 @@ class OptimizedCollaborativeCanvas {
         });
     }
 
-    // Optimized session joining
+    // Simplified session joining for single canvas
     joinSession() {
         if (!this.socket || !this.socket.connected) {
             console.warn('Cannot join session: socket not connected');
             return;
         }
+        
+        if (!this.nickname) {
+            console.warn('Cannot join session: nickname not set');
+            return;
+        }
 
         this.socket.emit('join-session', {
             userId: this.userId,
-            sessionId: this.sessionId,
             nickname: this.nickname
         });
     }
 
     handleSessionJoined(data) {
+        console.log('=== SESSION JOINED ===');
+        console.log('Users:', data.userCount);
+        
+        // Track when we joined the session
+        this.sessionJoinTime = Date.now();
+        
+        // Reset sequence numbers for fresh session
+        this.clientSequence = 0;
+        this.lastServerSequence = 0;
+        
         this.updateUserCount(data.userCount);
         
         // Update connected users
@@ -401,7 +490,19 @@ class OptimizedCollaborativeCanvas {
         });
         
         this.updateUsersList();
-        this.showNotification(`Joined session with ${data.userCount} users`, 'success');
+        
+        // Wait for server to send canvas state
+        console.log('Waiting for server to send canvas state...');
+        
+        // Set a timeout to request canvas state if we don't receive it
+        setTimeout(() => {
+            console.log('Canvas state timeout - requesting from server...');
+            if (this.socket && this.socket.connected) {
+                this.socket.emit('request-canvas-state');
+            }
+        }, 3000); // Wait 3 seconds for canvas state
+        
+        this.showNotification(`Joined canvas with ${data.userCount} users`, 'success');
     }
 
     handleUserJoined(data) {
@@ -562,11 +663,9 @@ class OptimizedCollaborativeCanvas {
                 timestamp: Date.now()
             });
             
-            // Request canvas sync if this is a new connection
-            this.sendToPeer(userId, {
-                type: 'request-canvas-sync',
-                timestamp: Date.now()
-            });
+            // Don't automatically request canvas sync - let the server handle initial canvas state
+            // Canvas sync will only be used for peer-to-peer updates during drawing
+            console.log(`Data channel ready with ${userId}, canvas sync will be handled by server`);
         };
         
         dataChannel.onmessage = (event) => {
@@ -751,7 +850,15 @@ class OptimizedCollaborativeCanvas {
                 }
                 break;
             case 'request-canvas-sync':
-                this.sendCanvasState(userId);
+                // Only send canvas state if we've been in the session for a reasonable time
+                // This prevents new users from overwriting existing users' canvases
+                const timeSinceJoin = Date.now() - (this.sessionJoinTime || Date.now());
+                if (timeSinceJoin > 10000) { // Only if we've been here for more than 10 seconds
+                    console.log(`Sending canvas state to ${userId} (we've been here for ${timeSinceJoin}ms)`);
+                    this.sendCanvasState(userId);
+                } else {
+                    console.log(`Ignoring canvas sync request from ${userId} (we're too new, only ${timeSinceJoin}ms)`);
+                }
                 break;
             case 'canvas-state':
                 this.applyCanvasState(data);
@@ -772,6 +879,24 @@ class OptimizedCollaborativeCanvas {
             this.updatePerformanceStats();
             this.optimizeBasedOnPerformance();
         }, 5000);
+    }
+    
+    // Auto-save canvas state periodically
+    startAutoSave() {
+        this.autoSaveInterval = setInterval(() => {
+            this.saveCanvasState();
+        }, 30000); // Save every 30 seconds
+    }
+    
+    saveCanvasState() {
+        const now = Date.now();
+        // Only save if there's been recent activity and connection is stable
+        if (this.socket && this.socket.connected && (now - this.lastCanvasSave > 25000)) {
+            this.lastCanvasSave = now;
+            this.socket.emit('canvas-state', {
+                imageData: this.canvas.toDataURL('image/jpeg', 0.8)
+            });
+        }
     }
 
     updatePerformanceStats() {
@@ -968,24 +1093,69 @@ class OptimizedCollaborativeCanvas {
     }
 
     applyCanvasState(data) {
-        if (data.userId === this.userId) return;
+        console.log('=== APPLYING CANVAS STATE ===');
+        console.log('Session:', this.sessionId);
+        console.log('Data:', data);
         
         try {
+            // Clear canvas first
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            // Check if this is an empty room (no saved state)
+            if (data.isEmpty || !data.data) {
+                console.log('Empty room - setting white background');
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                return;
+            }
+            
+            const imageData = data.data.imageData;
+            if (!imageData) {
+                console.log('No image data - setting white background');
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                return;
+            }
+            
+            console.log('Loading server canvas state...');
             const img = new Image();
             img.onload = () => {
-                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                // Set white background first
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw the server canvas state
                 this.ctx.drawImage(img, 0, 0, this.canvasWidth, this.canvasHeight);
+                console.log('✅ Server canvas state applied successfully');
             };
-            img.onerror = () => {
-                console.error('Failed to load canvas state image');
+            
+            img.onerror = (error) => {
+                console.error('❌ Failed to load server canvas state:', error);
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             };
-            img.src = data.imageData;
+            
+            img.src = imageData;
+            
         } catch (error) {
-            console.error('Error applying canvas state:', error);
+            console.error('❌ Error applying canvas state:', error);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         }
     }
 
-    // UI and Canvas methods (keeping existing functionality but optimized)
+    handleDrawingHistory(data) {
+        console.log('Received drawing history (real-time sync):', data.actions.length, 'actions');
+        
+        // Apply drawing actions for real-time collaboration only
+        // Canvas state should already be loaded from server
+        data.actions.forEach(action => {
+            if (action.type === 'drawing-data' && action.data) {
+                this.handleRemoteDrawing(action);
+            }
+        });
+    }
+
     initializeCanvas() {
         // Ensure canvas element exists
         if (!this.canvas) {
@@ -998,30 +1168,23 @@ class OptimizedCollaborativeCanvas {
         this.canvas.width = this.canvasWidth;
         this.canvas.height = this.canvasHeight;
         
+        // Set white background
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         this.ctx.strokeStyle = this.currentColor;
         this.ctx.lineWidth = this.currentSize;
         
-        console.log('Canvas context initialized with color:', this.currentColor, 'size:', this.currentSize);
-        
-        // Test drawing to verify canvas is working
-        this.ctx.strokeStyle = '#ff0000'; // Red test line
-        this.ctx.lineWidth = 3;
-        this.ctx.beginPath();
-        this.ctx.moveTo(50, 50);
-        this.ctx.lineTo(150, 150);
-        this.ctx.stroke();
-        console.log('Test line drawn from (50,50) to (150,150)');
-        
-        // Reset to default style
-        this.ctx.strokeStyle = this.currentColor;
-        this.ctx.lineWidth = this.currentSize;
+        console.log('Canvas context initialized with white background and color:', this.currentColor, 'size:', this.currentSize);
         
         // Mouse events
         this.canvas.addEventListener('mousedown', (e) => this.startDrawing(e));
         this.canvas.addEventListener('mousemove', (e) => {
-            this.draw(e);
+            if (this.isDrawing) {
+                this.draw(e);
+            }
             this.sendCursorPosition(e);
         });
         this.canvas.addEventListener('mouseup', () => this.stopDrawing());
@@ -1069,8 +1232,9 @@ class OptimizedCollaborativeCanvas {
     startDrawing(e) {
         this.isDrawing = true;
         const coords = this.getCanvasCoordinates(e);
+        this.clientSequence++;
         
-        console.log('Start drawing at:', coords);
+        console.log('Start drawing at:', coords, 'sequence:', this.clientSequence);
         
         // Set drawing properties
         this.ctx.strokeStyle = this.currentColor;
@@ -1082,23 +1246,50 @@ class OptimizedCollaborativeCanvas {
         this.ctx.moveTo(coords.x, coords.y);
         this.currentPath = [{ x: coords.x, y: coords.y }];
         
-        // Send start drawing event
+        // Send start drawing event with sequence number
         this.broadcastDrawing({
-            type: 'start-drawing',
+            type: 'startDrawing',
             x: coords.x,
             y: coords.y,
             normalizedX: coords.x / this.canvasWidth,
             normalizedY: coords.y / this.canvasHeight,
             color: this.currentColor,
             size: this.currentSize,
-            userId: this.userId
+            userId: this.userId,
+            sessionId: this.sessionId,
+            sequence: this.clientSequence,
+            timestamp: Date.now()
         });
     }
 
     draw(e) {
         if (!this.isDrawing) return;
         
+        // Throttle drawing events for better performance
+        const now = Date.now();
+        if (now - this.lastDrawTime < this.drawThrottleMs) {
+            // Store the latest data for later processing
+            this.pendingDrawData = e;
+            return;
+        }
+        
+        this.lastDrawTime = now;
+        this.processDrawEvent(e);
+        
+        // Process any pending data
+        if (this.pendingDrawData && this.pendingDrawData !== e) {
+            setTimeout(() => {
+                if (this.pendingDrawData && this.isDrawing) {
+                    this.processDrawEvent(this.pendingDrawData);
+                    this.pendingDrawData = null;
+                }
+            }, this.drawThrottleMs);
+        }
+    }
+    
+    processDrawEvent(e) {
         const coords = this.getCanvasCoordinates(e);
+        this.clientSequence++;
         
         // Set drawing properties again to ensure they're correct
         this.ctx.strokeStyle = this.currentColor;
@@ -1106,13 +1297,13 @@ class OptimizedCollaborativeCanvas {
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         
-        // Draw locally
+        // Draw locally (optimistic update)
         this.ctx.lineTo(coords.x, coords.y);
         this.ctx.stroke();
         
         this.currentPath.push({ x: coords.x, y: coords.y });
         
-        // Send drawing data
+        // Send drawing data with sequence number
         this.broadcastDrawing({
             type: 'draw',
             x: coords.x,
@@ -1121,7 +1312,10 @@ class OptimizedCollaborativeCanvas {
             normalizedY: coords.y / this.canvasHeight,
             color: this.currentColor,
             size: this.currentSize,
-            userId: this.userId
+            userId: this.userId,
+            sessionId: this.sessionId,
+            sequence: this.clientSequence,
+            timestamp: Date.now()
         });
     }
 
@@ -1129,17 +1323,22 @@ class OptimizedCollaborativeCanvas {
         if (!this.isDrawing) return;
         
         this.isDrawing = false;
+        this.clientSequence++;
         
-        // Send end drawing event
+        // Send end drawing event with sequence number
         this.broadcastDrawing({
-            type: 'end-drawing',
+            type: 'endDrawing',
             path: this.currentPath,
             color: this.currentColor,
             size: this.currentSize,
-            userId: this.userId
+            userId: this.userId,
+            sessionId: this.sessionId,
+            sequence: this.clientSequence,
+            timestamp: Date.now()
         });
         
         this.currentPath = [];
+        this.currentStrokeId = null;
         
         // Send canvas state to WebSocket for persistence
         if (this.socket && this.socket.connected) {
@@ -1150,27 +1349,63 @@ class OptimizedCollaborativeCanvas {
     }
 
     handleRemoteDrawing(data) {
-        if (data.userId === this.userId) return;
+        // Skip our own drawing data (we already drew it optimistically)
+        if (data.userId === this.userId) {
+            // Update our tracking with server-validated data
+            if (data.serverSequence) {
+                this.lastServerSequence = Math.max(this.lastServerSequence, data.serverSequence);
+            }
+            if (data.data && data.data.strokeId) {
+                this.currentStrokeId = data.data.strokeId;
+            }
+            return;
+        }
+        
+        const drawingData = data.data || data;
+        
+        // Validate that this drawing data is for our current session
+        if (drawingData.sessionId && drawingData.sessionId !== this.sessionId) {
+            console.log(`Ignoring drawing data for different session: ${drawingData.sessionId} vs current: ${this.sessionId}`);
+            return;
+        }
         
         // Handle clear canvas command
-        if (data.type === 'clear-canvas') {
+        if (drawingData.type === 'clear-canvas') {
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            // Clear all remote drawing states
+            // Set white background
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             this.remoteDrawingStates.clear();
             return;
         }
         
         // Handle fill background command
-        if (data.type === 'fill-background') {
-            this.ctx.fillStyle = data.color;
+        if (drawingData.type === 'fill-background') {
+            this.ctx.fillStyle = drawingData.color;
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             return;
         }
         
-        const x = data.normalizedX !== undefined ? 
-            data.normalizedX * this.canvasWidth : data.x;
-        const y = data.normalizedY !== undefined ? 
-            data.normalizedY * this.canvasHeight : data.y;
+        // Validate server sequence to prevent out-of-order rendering
+        if (data.serverSequence && data.serverSequence <= this.lastServerSequence) {
+            console.log('Ignoring out-of-order drawing data');
+            return;
+        }
+        
+        if (data.serverSequence) {
+            this.lastServerSequence = data.serverSequence;
+        }
+        
+        const x = drawingData.normalizedX !== undefined ? 
+            drawingData.normalizedX * this.canvasWidth : drawingData.x;
+        const y = drawingData.normalizedY !== undefined ? 
+            drawingData.normalizedY * this.canvasHeight : drawingData.y;
+        
+        // Validate coordinates to prevent drawing outside canvas
+        if (x < 0 || x > this.canvasWidth || y < 0 || y > this.canvasHeight) {
+            console.log('Ignoring drawing data outside canvas bounds');
+            return;
+        }
         
         // Get or create drawing state for this user
         let userDrawingState = this.remoteDrawingStates.get(data.userId);
@@ -1179,41 +1414,92 @@ class OptimizedCollaborativeCanvas {
                 isDrawing: false,
                 lastX: 0,
                 lastY: 0,
-                color: data.color || '#000000',
-                size: data.size || 5
+                color: '#000000', // Default to black for consistency
+                size: 5,
+                currentStroke: null
             };
             this.remoteDrawingStates.set(data.userId, userDrawingState);
         }
         
-        // Set drawing properties
-        this.ctx.strokeStyle = data.color || userDrawingState.color;
-        this.ctx.lineWidth = data.size || userDrawingState.size;
+        // Set drawing style from validated server data
+        this.ctx.strokeStyle = drawingData.color || userDrawingState.color;
+        this.ctx.lineWidth = drawingData.size || userDrawingState.size;
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
         
-        if (data.type === 'start-drawing') {
+        // Handle different drawing types
+        if (drawingData.type === 'startDrawing') {
             userDrawingState.isDrawing = true;
             userDrawingState.lastX = x;
             userDrawingState.lastY = y;
-            userDrawingState.color = data.color || '#000000';
-            userDrawingState.size = data.size || 5;
+            userDrawingState.color = drawingData.color || '#000000'; // Default to black
+            userDrawingState.size = drawingData.size || 5;
+            userDrawingState.currentStroke = drawingData.strokeId;
             
             this.ctx.beginPath();
             this.ctx.moveTo(x, y);
             
-        } else if (data.type === 'draw' && userDrawingState.isDrawing) {
-            // Draw a continuous line from last position to current position
-            this.ctx.beginPath();
-            this.ctx.moveTo(userDrawingState.lastX, userDrawingState.lastY);
-            this.ctx.lineTo(x, y);
-            this.ctx.stroke();
+        } else if (drawingData.type === 'draw' && userDrawingState.isDrawing) {
+            // Validate stroke continuity to prevent long connecting lines
+            if (drawingData.strokeId && drawingData.strokeId !== userDrawingState.currentStroke) {
+                console.log('Stroke ID mismatch, starting new stroke');
+                userDrawingState.isDrawing = true;
+                userDrawingState.currentStroke = drawingData.strokeId;
+                this.ctx.beginPath();
+                this.ctx.moveTo(x, y);
+            } else {
+                // Check for unrealistic jumps to prevent long lines
+                const distance = Math.sqrt(
+                    Math.pow(x - userDrawingState.lastX, 2) + 
+                    Math.pow(y - userDrawingState.lastY, 2)
+                );
+                
+                if (distance > this.canvasWidth * 0.3) { // More than 30% of canvas width
+                    console.log('Large jump detected, starting new stroke segment');
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, y);
+                } else {
+                    this.ctx.lineTo(x, y);
+                    this.ctx.stroke();
+                }
+            }
             
-            // Update last position
             userDrawingState.lastX = x;
             userDrawingState.lastY = y;
             
-        } else if (data.type === 'end-drawing') {
+        } else if (drawingData.type === 'endDrawing') {
             userDrawingState.isDrawing = false;
+            userDrawingState.currentStroke = null;
+        }
+    }
+    
+    handleDrawingCorrection(data) {
+        console.log('Drawing correction received:', data);
+        
+        // Handle different types of corrections
+        switch (data.reason) {
+            case 'invalid_data':
+                // Reset drawing state
+                this.isDrawing = false;
+                this.currentPath = [];
+                this.currentStrokeId = null;
+                
+                // Show notification to user
+                this.showNotification('Drawing was corrected by server', 'warning');
+                break;
+                
+            case 'sequence_mismatch':
+                // Resync sequence numbers
+                if (data.expectedSequence) {
+                    this.clientSequence = data.expectedSequence;
+                }
+                break;
+                
+            case 'large_jump':
+                // Start a new stroke
+                this.isDrawing = false;
+                this.currentPath = [];
+                break;
         }
     }
 
@@ -1350,7 +1636,13 @@ class OptimizedCollaborativeCanvas {
     }
 
     updateUsersList() {
-        const usersList = document.getElementById('usersList');
+        // Update both regular and draggable user lists
+        this.updateUsersListContainer('usersList');
+        this.updateUsersListContainer('usersListDrag');
+    }
+    
+    updateUsersListContainer(containerId) {
+        const usersList = document.getElementById(containerId);
         if (!usersList) return;
         
         usersList.innerHTML = '';
@@ -1436,26 +1728,116 @@ class OptimizedCollaborativeCanvas {
     }
 
     initializeChat() {
-        this.createChatPanel();
         this.setupChatControls();
+        this.setupChatTabs();
+        this.setupChatToggle();
     }
+    
+    // Room management removed - single canvas only
+    
+
+    
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     setupColorPicker() {
-        const colorPicker = document.getElementById('colorPicker');
         const colorTrigger = document.getElementById('colorTrigger');
         const colorHexLabel = document.getElementById('colorHexLabel');
+        const colorHexInput = document.getElementById('colorHexInput');
+        const applyHexBtn = document.getElementById('applyHex');
+        const closeBtn = document.getElementById('closeColorPicker');
+        const hueRange = document.getElementById('hueRange');
+        const huePreview = document.getElementById('huePreview');
+        const pickerPreview = document.getElementById('pickerPreview');
         
+        // Toggle color picker popover
         if (colorTrigger) {
             colorTrigger.addEventListener('click', () => {
-                // Toggle color picker popover
                 const popover = document.getElementById('colorPopover');
                 if (popover) {
                     popover.hidden = !popover.hidden;
+                    if (!popover.hidden) {
+                        this.updateColorPickerFromCurrent();
+                    }
                 }
             });
         }
         
-        // Color swatches
+        // Close button
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                const popover = document.getElementById('colorPopover');
+                if (popover) popover.hidden = true;
+            });
+        }
+        
+        // Hue range slider
+        if (hueRange && huePreview && pickerPreview) {
+            hueRange.addEventListener('input', (e) => {
+                const hue = parseInt(e.target.value);
+                const hslColor = `hsl(${hue}, 100%, 50%)`;
+                const hexColor = this.hslToHex(hue, 100, 50);
+                
+                huePreview.style.backgroundColor = hslColor;
+                pickerPreview.style.backgroundColor = hexColor;
+                
+                if (colorHexInput) {
+                    colorHexInput.value = hexColor;
+                }
+            });
+        }
+        
+        // Hex input handling
+        if (colorHexInput && applyHexBtn) {
+            const applyHexColor = () => {
+                const hexValue = colorHexInput.value.trim();
+                if (this.isValidHexColor(hexValue)) {
+                    this.currentColor = hexValue;
+                    this.updateColorDisplay(hexValue);
+                    this.updateDrawingProperties();
+                    this.updateBrushPreview();
+                    // Close popover after applying
+                    const popover = document.getElementById('colorPopover');
+                    if (popover) popover.hidden = true;
+                }
+            };
+            
+            applyHexBtn.addEventListener('click', applyHexColor);
+            colorHexInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    applyHexColor();
+                }
+            });
+            
+            // Real-time hex input validation
+            colorHexInput.addEventListener('input', (e) => {
+                const hexValue = e.target.value.trim();
+                if (this.isValidHexColor(hexValue)) {
+                    if (pickerPreview) {
+                        pickerPreview.style.backgroundColor = hexValue;
+                    }
+                }
+            });
+        }
+        
+        // Color swatches with improved feedback
         const swatches = document.querySelectorAll('.swatch');
         swatches.forEach(swatch => {
             swatch.addEventListener('click', () => {
@@ -1463,23 +1845,109 @@ class OptimizedCollaborativeCanvas {
                 this.currentColor = color;
                 this.updateColorDisplay(color);
                 this.updateDrawingProperties();
+                this.updateBrushPreview();
+                
+                // Update active state
+                swatches.forEach(s => s.classList.remove('active'));
+                swatch.classList.add('active');
+                
                 console.log('Color changed to:', color);
             });
         });
+        
+        // Close popover when clicking outside
+        document.addEventListener('click', (e) => {
+            const popover = document.getElementById('colorPopover');
+            const trigger = document.getElementById('colorTrigger');
+            if (popover && !popover.hidden && !popover.contains(e.target) && e.target !== trigger) {
+                popover.hidden = true;
+            }
+        });
+    }
+
+    // Helper function to convert HSL to Hex
+    hslToHex(h, s, l) {
+        l /= 100;
+        const a = s * Math.min(l, 1 - l) / 100;
+        const f = n => {
+            const k = (n + h / 30) % 12;
+            const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+            return Math.round(255 * color).toString(16).padStart(2, '0');
+        };
+        return `#${f(0)}${f(8)}${f(4)}`;
+    }
+
+    // Update color picker from current color
+    updateColorPickerFromCurrent() {
+        const colorHexInput = document.getElementById('colorHexInput');
+        const pickerPreview = document.getElementById('pickerPreview');
+        
+        if (colorHexInput) {
+            colorHexInput.value = this.currentColor;
+        }
+        
+        if (pickerPreview) {
+            pickerPreview.style.backgroundColor = this.currentColor;
+        }
     }
 
     setupBrushControls() {
         const brushSize = document.getElementById('brushSize');
-        const sizeLabel = document.getElementById('sizeLabel');
+        const sizeValue = document.getElementById('sizeValue');
+        const sizeDec = document.getElementById('sizeDec');
+        const sizeInc = document.getElementById('sizeInc');
+        const quickSizes = document.querySelectorAll('.size-quick');
         
+        // Update size display
+        const updateSizeDisplay = (size) => {
+            this.currentSize = parseInt(size);
+            if (sizeValue) {
+                sizeValue.textContent = size;
+            }
+            if (brushSize) {
+                brushSize.value = size;
+            }
+            this.updateDrawingProperties();
+            this.updateBrushPreview();
+        };
+        
+        // Range slider
         if (brushSize) {
             brushSize.addEventListener('input', (e) => {
-                this.currentSize = parseInt(e.target.value);
-                if (sizeLabel) {
-                    sizeLabel.textContent = this.currentSize;
-                }
+                updateSizeDisplay(e.target.value);
             });
         }
+        
+        // Decrease/Increase buttons
+        if (sizeDec) {
+            sizeDec.addEventListener('click', () => {
+                const newSize = Math.max(1, this.currentSize - 1);
+                updateSizeDisplay(newSize);
+            });
+        }
+        
+        if (sizeInc) {
+            sizeInc.addEventListener('click', () => {
+                const newSize = Math.min(50, this.currentSize + 1);
+                updateSizeDisplay(newSize);
+            });
+        }
+        
+        // Quick size buttons
+        quickSizes.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const size = parseInt(btn.dataset.size);
+                updateSizeDisplay(size);
+                
+                // Update active state
+                quickSizes.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    }
+
+    isValidHexColor(hex) {
+        return /^#([0-9A-F]{3}){1,2}$/i.test(hex);
     }
 
     setupToolButtons() {
@@ -1501,6 +1969,8 @@ class OptimizedCollaborativeCanvas {
     updateColorDisplay(color) {
         const colorHexLabel = document.getElementById('colorHexLabel');
         const colorTrigger = document.getElementById('colorTrigger');
+        const colorHexInput = document.getElementById('colorHexInput');
+        const brushPreview = document.getElementById('brushPreviewCircle');
         
         if (colorHexLabel) {
             colorHexLabel.textContent = color;
@@ -1512,6 +1982,14 @@ class OptimizedCollaborativeCanvas {
                 dot.style.setProperty('--c', color);
             }
         }
+        
+        if (colorHexInput) {
+            colorHexInput.value = color;
+        }
+        
+        if (brushPreview) {
+            brushPreview.style.backgroundColor = color;
+        }
     }
 
     updateDrawingProperties() {
@@ -1520,18 +1998,81 @@ class OptimizedCollaborativeCanvas {
             this.ctx.lineWidth = this.currentSize;
             this.ctx.lineCap = 'round';
             this.ctx.lineJoin = 'round';
-            console.log('Drawing properties updated - Color:', this.currentColor, 'Size:', this.currentSize);
+        }
+        
+        // Update brush preview
+        this.updateBrushPreview();
+        
+        console.log('Drawing properties updated - Color:', this.currentColor, 'Size:', this.currentSize);
+    }
+
+    updateBrushPreview() {
+        const brushPreview = document.getElementById('brushPreviewCircle');
+        if (brushPreview) {
+            brushPreview.style.width = Math.max(8, this.currentSize) + 'px';
+            brushPreview.style.height = Math.max(8, this.currentSize) + 'px';
+            brushPreview.style.backgroundColor = this.currentColor;
+        }
+        
+        // Update custom brush cursor
+        this.updateBrushCursor();
+    }
+
+    // Create and manage custom brush cursor
+    updateBrushCursor() {
+        // Remove existing cursor
+        const existingCursor = document.querySelector('.brush-cursor');
+        if (existingCursor) {
+            existingCursor.remove();
+        }
+        
+        // Create new cursor
+        const cursor = document.createElement('div');
+        cursor.className = 'brush-cursor';
+        cursor.style.width = this.currentSize + 'px';
+        cursor.style.height = this.currentSize + 'px';
+        cursor.style.display = 'none';
+        
+        document.body.appendChild(cursor);
+        
+        // Update canvas cursor behavior
+        if (this.canvas) {
+            this.canvas.addEventListener('mouseenter', () => {
+                cursor.style.display = 'block';
+                this.canvas.style.cursor = 'none';
+            });
+            
+            this.canvas.addEventListener('mouseleave', () => {
+                cursor.style.display = 'none';
+                this.canvas.style.cursor = 'crosshair';
+            });
+            
+            this.canvas.addEventListener('mousemove', (e) => {
+                const rect = this.canvas.getBoundingClientRect();
+                cursor.style.left = e.clientX + 'px';
+                cursor.style.top = e.clientY + 'px';
+            });
         }
     }
 
     clearCanvas() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
+        // Set white background
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
         // Broadcast clear event
         this.broadcastDrawing({
             type: 'clear-canvas',
-            userId: this.userId
+            userId: this.userId,
+            sessionId: this.sessionId,
+            sequence: ++this.clientSequence,
+            timestamp: Date.now()
         });
+        
+        // Save cleared canvas state immediately
+        this.saveCanvasState();
     }
 
     fillCanvasBackground() {
@@ -1543,8 +2084,14 @@ class OptimizedCollaborativeCanvas {
         this.broadcastDrawing({
             type: 'fill-background',
             color: this.currentColor,
-            userId: this.userId
+            userId: this.userId,
+            sessionId: this.sessionId,
+            sequence: ++this.clientSequence,
+            timestamp: Date.now()
         });
+        
+        // Save filled canvas state immediately
+        this.saveCanvasState();
     }
 
     createCursorsContainer() {
@@ -1563,39 +2110,55 @@ class OptimizedCollaborativeCanvas {
         document.body.appendChild(cursorsContainer);
     }
 
-    createChatPanel() {
-        // Create collapsible chat panel with users list
-        const chatPanel = document.createElement('div');
-        chatPanel.id = 'chatPanel';
-        chatPanel.className = 'panel chat-panel collapsible';
-        chatPanel.innerHTML = `
-            <div class="panel-header clickable" id="chatPanelHeader">
-                <h3>💬 Chat & Users</h3>
-                <button class="collapse-btn" id="chatCollapseBtn" title="Toggle chat">▼</button>
-            </div>
-            <div class="panel-content" id="chatPanelContent">
-                <div class="chat-tabs">
-                    <button class="tab-btn active" data-tab="chat">Chat</button>
-                    <button class="tab-btn" data-tab="users">Users Online</button>
-                </div>
-                <div class="tab-content" id="chatTab">
-                    <div id="chatMessages" class="chat-messages"></div>
-                    <div class="chat-input-container">
-                        <input type="text" id="chatInput" placeholder="Type a message..." maxlength="200">
-                        <button id="sendMessage" class="btn-small">Send</button>
-                    </div>
-                </div>
-                <div class="tab-content hidden" id="usersTab">
-                    <div id="usersList" class="users-list"></div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(chatPanel);
+    setupChatToggle() {
+        const chatToggle = document.getElementById('chatToggle');
+        const chatContainer = document.getElementById('chatContainer');
         
-        // Add collapse functionality
-        this.setupChatCollapse();
-        // Add tab switching functionality
-        this.setupChatTabs();
+        if (chatToggle && chatContainer) {
+            chatToggle.addEventListener('click', () => {
+                const isCollapsed = chatContainer.classList.contains('collapsed');
+                if (isCollapsed) {
+                    chatContainer.classList.remove('collapsed');
+                    chatToggle.textContent = '▼';
+                } else {
+                    chatContainer.classList.add('collapsed');
+                    chatToggle.textContent = '▶';
+                }
+            });
+        }
+    }
+
+    setupChatTabs() {
+        const tabButtons = document.querySelectorAll('.chat-tab-btn');
+        const chatTab = document.getElementById('chatTab');
+        const usersTab = document.getElementById('usersTab');
+        
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabType = btn.dataset.tab;
+                
+                // Update active tab button
+                tabButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // Show/hide appropriate content
+                if (tabType === 'chat') {
+                    chatTab.classList.add('active');
+                    usersTab.classList.remove('active');
+                } else if (tabType === 'users') {
+                    chatTab.classList.remove('active');
+                    usersTab.classList.add('active');
+                    // Update users list when switching to users tab
+                    this.updateUsersList();
+                }
+            });
+        });
+    }
+
+    createChatPanel() {
+        // This function is no longer needed as chat is now in HTML
+        // Just ensure the chat is properly initialized
+        console.log('Chat panel is now integrated in sidebar');
     }
 
     setupChatControls() {
@@ -1662,30 +2225,482 @@ class OptimizedCollaborativeCanvas {
     }
 
     addChatMessage(data) {
-        const chatMessages = document.getElementById('chatMessages');
+        // Add to both regular chat and draggable chat
+        this.addChatMessageToContainer('chatMessages', data);
+        this.addChatMessageToContainer('chatMessagesDrag', data);
+    }
+    
+    addChatMessageToContainer(containerId, data) {
+        const chatMessages = document.getElementById(containerId);
         if (!chatMessages) return;
+        
+        // Sanitize and truncate long messages
+        const maxMessageLength = 300; // Limit message length
+        let message = data.message || '';
+        if (typeof message !== 'string') {
+            message = String(message);
+        }
+        
+        // Truncate if too long
+        if (message.length > maxMessageLength) {
+            message = message.substring(0, maxMessageLength) + '...';
+        }
+        
+        // Escape HTML to prevent XSS
+        message = this.escapeHtml(message);
         
         const messageElement = document.createElement('div');
         messageElement.className = 'chat-message';
         
         const time = new Date(data.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         const isOwnMessage = data.userId === this.userId;
+        const nickname = this.escapeHtml(data.nickname || 'Unknown');
         
         messageElement.innerHTML = `
             <span class="chat-time">${time}</span>
-            <span class="chat-nickname ${isOwnMessage ? 'own-message' : ''}">${data.nickname}:</span>
-            <span class="chat-text">${data.message}</span>
+            <span class="chat-nickname ${isOwnMessage ? 'own-message' : ''}">${nickname}:</span>
+            <span class="chat-text">${message}</span>
         `;
         
+        // Add with fade-in animation
+        messageElement.style.opacity = '0';
+        messageElement.style.transform = 'translateY(10px)';
         chatMessages.appendChild(messageElement);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
         
-        // Keep only last 50 messages
-        while (chatMessages.children.length > 50) {
-            chatMessages.removeChild(chatMessages.firstChild);
+        // Trigger animation
+        requestAnimationFrame(() => {
+            messageElement.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+            messageElement.style.opacity = '1';
+            messageElement.style.transform = 'translateY(0)';
+        });
+        
+        // Auto-scroll to bottom with smooth behavior
+        this.scrollChatToBottom(chatMessages);
+        
+        // Keep only last 100 messages to prevent memory issues
+        while (chatMessages.children.length > 100) {
+            const firstChild = chatMessages.firstChild;
+            if (firstChild) {
+                chatMessages.removeChild(firstChild);
+            }
         }
+    }
+    
+    scrollChatToBottom(container = null) {
+        const containers = container ? [container] : [
+            document.getElementById('chatMessages'),
+            document.getElementById('chatMessagesDrag')
+        ];
+        
+        containers.forEach(chatMessages => {
+            if (chatMessages) {
+                requestAnimationFrame(() => {
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                });
+            }
+        });
+    }
+
+    escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+    
+    initializeDraggableComponents() {
+        // Initialize toolbar buttons
+        const toggleColorPicker = document.getElementById('toggleColorPicker');
+        const toggleChat = document.getElementById('toggleChat');
+        const colorPickerComponent = document.getElementById('colorPickerComponent');
+        const chatComponent = document.getElementById('chatComponent');
+        
+        if (toggleColorPicker && colorPickerComponent) {
+            toggleColorPicker.addEventListener('click', () => {
+                const isVisible = colorPickerComponent.style.display !== 'none';
+                colorPickerComponent.style.display = isVisible ? 'none' : 'block';
+                toggleColorPicker.classList.toggle('active', !isVisible);
+            });
+        }
+        
+        if (toggleChat && chatComponent) {
+            toggleChat.addEventListener('click', () => {
+                const isVisible = chatComponent.style.display !== 'none';
+                chatComponent.style.display = isVisible ? 'none' : 'block';
+                toggleChat.classList.toggle('active', !isVisible);
+            });
+        }
+        
+        // Make components draggable
+        this.makeDraggable(colorPickerComponent);
+        this.makeDraggable(chatComponent);
+        
+        // Initialize color picker functionality for draggable component
+        this.initializeDraggableColorPicker();
+        
+        // Initialize chat functionality for draggable component
+        this.initializeDraggableChat();
+        
+        // Close buttons
+        const closeColorPicker = document.getElementById('closeColorPickerComponent');
+        const closeChat = document.getElementById('closeChatComponent');
+        
+        if (closeColorPicker) {
+            closeColorPicker.addEventListener('click', () => {
+                colorPickerComponent.style.display = 'none';
+                toggleColorPicker.classList.remove('active');
+            });
+        }
+        
+        if (closeChat) {
+            closeChat.addEventListener('click', () => {
+                chatComponent.style.display = 'none';
+                toggleChat.classList.remove('active');
+            });
+        }
+    }
+    
+    makeDraggable(element) {
+        if (!element) return;
+        
+        const header = element.querySelector('.component-header');
+        if (!header) return;
+        
+        let isDragging = false;
+        let currentX;
+        let currentY;
+        let initialX;
+        let initialY;
+        let xOffset = 0;
+        let yOffset = 0;
+        
+        header.addEventListener('mousedown', dragStart);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('mouseup', dragEnd);
+        
+        function dragStart(e) {
+            if (e.target.classList.contains('component-btn')) return;
+            
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
+            
+            if (e.target === header || header.contains(e.target)) {
+                isDragging = true;
+                element.classList.add('dragging');
+            }
+        }
+        
+        function drag(e) {
+            if (isDragging) {
+                e.preventDefault();
+                currentX = e.clientX - initialX;
+                currentY = e.clientY - initialY;
+                
+                xOffset = currentX;
+                yOffset = currentY;
+                
+                element.style.transform = `translate(${currentX}px, ${currentY}px)`;
+            }
+        }
+        
+        function dragEnd() {
+            if (isDragging) {
+                isDragging = false;
+                element.classList.remove('dragging');
+            }
+        }
+    }
+    
+    initializeDraggableColorPicker() {
+        // Set up color picker functionality for the draggable component
+        const swatches = document.querySelectorAll('#colorPickerComponent .swatch');
+        swatches.forEach(swatch => {
+            swatch.addEventListener('click', (e) => {
+                const color = e.target.dataset.color;
+                if (color) {
+                    this.setColor(color);
+                    this.updateColorDisplay(color);
+                    // Update both regular and draggable displays
+                    this.updateDraggableColorDisplay(color);
+                }
+            });
+        });
+    }
+    
+    initializeDraggableChat() {
+        // Set up chat functionality for the draggable component
+        const chatInput = document.getElementById('chatInputDrag');
+        const sendButton = document.getElementById('sendMessageDrag');
+        const tabButtons = document.querySelectorAll('#chatComponent .chat-tab-btn');
+        
+        if (chatInput && sendButton) {
+            const sendMessage = () => {
+                const message = chatInput.value.trim();
+                if (message) {
+                    this.sendChatMessage(message);
+                    chatInput.value = '';
+                }
+            };
+            
+            sendButton.addEventListener('click', sendMessage);
+            chatInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+        }
+        
+        // Tab switching
+        tabButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const targetTab = button.dataset.tab;
+                
+                // Update active tab button
+                tabButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                
+                // Show corresponding tab content
+                const chatTabDrag = document.getElementById('chatTabDrag');
+                const usersTabDrag = document.getElementById('usersTabDrag');
+                
+                if (targetTab === 'chatDrag') {
+                    chatTabDrag?.classList.add('active');
+                    usersTabDrag?.classList.remove('active');
+                } else if (targetTab === 'usersDrag') {
+                    usersTabDrag?.classList.add('active');
+                    chatTabDrag?.classList.remove('active');
+                }
+            });
+        });
+    }
+    
+    updateDraggableColorDisplay(color) {
+        const colorTrigger = document.getElementById('colorTriggerDrag');
+        const colorHexLabel = document.getElementById('colorHexLabelDrag');
+        
+        if (colorTrigger) {
+            const dot = colorTrigger.querySelector('.trigger-dot');
+            if (dot) {
+                dot.style.setProperty('--c', color);
+            }
+        }
+        
+        if (colorHexLabel) {
+            colorHexLabel.textContent = color.toUpperCase();
+        }
+    }
+    
+    initializeCanvasPanning() {
+        const canvasFrame = document.getElementById('canvasFrame');
+        if (!canvasFrame) return;
+        
+        let isPanning = false;
+        let startX, startY;
+        let scrollLeft, scrollTop;
+        
+        canvasFrame.addEventListener('mousedown', (e) => {
+            // Only pan if clicking on the frame background, not the canvas
+            if (e.target === canvasFrame || e.target.classList.contains('grid-bg')) {
+                isPanning = true;
+                startX = e.pageX - canvasFrame.offsetLeft;
+                startY = e.pageY - canvasFrame.offsetTop;
+                scrollLeft = canvasFrame.scrollLeft;
+                scrollTop = canvasFrame.scrollTop;
+                canvasFrame.style.cursor = 'grabbing';
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
+        
+        canvasFrame.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const x = e.pageX - canvasFrame.offsetLeft;
+            const y = e.pageY - canvasFrame.offsetTop;
+            const walkX = (x - startX) * 2;
+            const walkY = (y - startY) * 2;
+            
+            canvasFrame.scrollLeft = scrollLeft - walkX;
+            canvasFrame.scrollTop = scrollTop - walkY;
+        });
+        
+        document.addEventListener('mouseup', () => {
+            if (isPanning) {
+                isPanning = false;
+                canvasFrame.style.cursor = 'grab';
+            }
+        });
+        
+        canvasFrame.addEventListener('mouseleave', () => {
+            if (isPanning) {
+                isPanning = false;
+                canvasFrame.style.cursor = 'grab';
+            }
+        });
+        
+        // Add zoom functionality with mouse wheel
+        canvasFrame.addEventListener('wheel', (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                const canvas = document.getElementById('drawingCanvas');
+                const container = document.querySelector('.canvas-container');
+                
+                if (canvas && container) {
+                    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                    const currentScale = parseFloat(canvas.style.transform.replace(/.*scale\(([^)]+)\).*/, '$1') || '1');
+                    const newScale = Math.max(0.1, Math.min(3, currentScale * delta));
+                    
+                    canvas.style.transform = `scale(${newScale})`;
+                    canvas.style.transformOrigin = 'top left';
+                    
+                    // Update zoom indicator
+                    if (window.updateZoomIndicator) {
+                        window.updateZoomIndicator();
+                    }
+                    
+                    // Adjust container size based on scale
+                    container.style.width = `${2000 * newScale}px`;
+                    container.style.height = `${1200 * newScale}px`;
+                }
+            }
+        });
+    }
+    
+    initializeThemeSystem() {
+        // Get saved theme or default to dark
+        const savedTheme = localStorage.getItem('canvas-theme') || 'dark';
+        this.setTheme(savedTheme);
+        
+        // Theme switcher buttons
+        const themeButtons = document.querySelectorAll('.theme-btn');
+        themeButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const theme = btn.dataset.theme;
+                this.setTheme(theme);
+                localStorage.setItem('canvas-theme', theme);
+                
+                // Update active state
+                themeButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+            
+            // Set initial active state
+            if (btn.dataset.theme === savedTheme) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+    }
+    
+    setTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        
+        // Update canvas background based on theme
+        const canvas = document.getElementById('drawingCanvas');
+        if (canvas && this.ctx) {
+            // Clear canvas and set new background
+            this.ctx.fillStyle = theme === 'light' ? '#ffffff' : '#ffffff';
+            this.ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        // Dispatch theme change event for other components
+        window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme } }));
     }
 }
 
 // Initialize the application
 new OptimizedCollaborativeCanvas();
+
+// Enhanced canvas zoom indicator
+document.addEventListener('DOMContentLoaded', function() {
+    const canvasArea = document.querySelector('.canvas-area');
+    if (canvasArea) {
+        const zoomIndicator = document.createElement('div');
+        zoomIndicator.className = 'zoom-indicator';
+        zoomIndicator.textContent = '100%';
+        canvasArea.appendChild(zoomIndicator);
+        
+        // Update zoom indicator function
+        window.updateZoomIndicator = function() {
+            const canvas = document.getElementById('whiteboard');
+            if (canvas) {
+                const currentScale = parseFloat(canvas.style.transform.replace(/.*scale\(([^)]+)\).*/, '$1') || '1');
+                const percentage = Math.round(currentScale * 100);
+                zoomIndicator.textContent = `${percentage}%`;
+                
+                // Show indicator briefly
+                zoomIndicator.classList.add('visible');
+                clearTimeout(window.zoomIndicatorTimeout);
+                window.zoomIndicatorTimeout = setTimeout(() => {
+                    zoomIndicator.classList.remove('visible');
+                }, 2000);
+            }
+        };
+    }
+});
+
+// Enhanced connection status indicator
+function updateConnectionStatus(status, message) {
+    const connectionStatus = document.getElementById('connectionStatus');
+    if (connectionStatus) {
+        connectionStatus.className = status;
+        connectionStatus.textContent = message || status;
+        
+        // Add pulse animation for connecting state
+        if (status === 'connecting') {
+            connectionStatus.style.animation = 'pulse 1s infinite';
+        } else {
+            connectionStatus.style.animation = '';
+        }
+    }
+}
+
+// Keyboard shortcuts for theme switching
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey || e.metaKey) {
+        switch(e.key) {
+            case '1':
+                e.preventDefault();
+                document.querySelector('[data-theme="dark"]')?.click();
+                break;
+            case '2':
+                e.preventDefault();
+                document.querySelector('[data-theme="light"]')?.click();
+                break;
+            case '3':
+                e.preventDefault();
+                document.querySelector('[data-theme="blue"]')?.click();
+                break;
+        }
+    }
+});
+
+// Performance monitoring
+let frameCount = 0;
+let lastTime = performance.now();
+
+function monitorPerformance() {
+    frameCount++;
+    const currentTime = performance.now();
+    
+    if (currentTime - lastTime >= 1000) {
+        const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+        console.log(`Canvas FPS: ${fps}`);
+        frameCount = 0;
+        lastTime = currentTime;
+    }
+    
+    requestAnimationFrame(monitorPerformance);
+}
+
+// Start performance monitoring in development
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    monitorPerformance();
+}
