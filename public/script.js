@@ -1585,7 +1585,8 @@ class OptimizedCollaborativeCanvas {
                     setTimeout(callback, 0);
                 });
             };
-        }
+        // Use Firefox-specific requestAnimationFrame wrapper if needed
+        // (No global override; use this.firefoxRequestAnimationFrame where needed)
         
         // Optimize canvas context for Firefox
         if (this.ctx) {
