@@ -107,19 +107,42 @@ class CanvasPersistence {
     // Rebuild authoritative canvas state from drawing actions
     async rebuildCanvasFromActions(drawingActions) {
         try {
-            // For now, we'll mark that a rebuild is needed
-            // This will be implemented with a proper canvas reconstruction
             console.log(`Rebuilding canvas from ${drawingActions.length} drawing actions`);
             
-            // Create a minimal state indicating server authority
-            this.canvasState = {
+            if (drawingActions.length === 0) {
+                // Empty canvas state
+                this.canvasState = {
+                    isServerAuthoritative: true,
+                    lastRebuilt: Date.now(),
+                    actionCount: 0,
+                    isEmpty: true,
+                    imageData: null
+                };
+                await this.saveCanvasState(this.canvasState);
+                return this.canvasState;
+            }
+            
+            // For now, create a simple representation until we implement full reconstruction
+            // In a complete implementation, this would render all drawing actions to a server-side canvas
+            const reconstructedState = {
                 isServerAuthoritative: true,
                 lastRebuilt: Date.now(),
                 actionCount: drawingActions.length,
-                isEmpty: drawingActions.length === 0
+                isEmpty: false,
+                // TODO: Implement actual canvas rendering from drawing actions
+                // For now, we'll mark that reconstruction is needed
+                needsVisualReconstruction: true,
+                lastActions: drawingActions.slice(-10).map(action => ({
+                    type: action.type,
+                    timestamp: action.timestamp,
+                    serverSequence: action.serverSequence
+                }))
             };
             
+            this.canvasState = reconstructedState;
             await this.saveCanvasState(this.canvasState);
+            
+            console.log('Canvas state rebuilt from drawing actions (visual reconstruction pending)');
             return this.canvasState;
         } catch (error) {
             console.error('Failed to rebuild canvas from actions:', error);
@@ -499,11 +522,37 @@ class SessionManager {
             
             if (authoritativeState) {
                 console.log(`Sending server-authoritative canvas state to user ${userId}`);
-                socket.emit('canvas-state', { 
-                    data: authoritativeState,
-                    isServerAuthoritative: true,
-                    timestamp: Date.now()
-                });
+                
+                // Check if we have drawing actions but no visual reconstruction
+                if (authoritativeState.needsVisualReconstruction && this.drawingActions.length > 0) {
+                    console.log('State needs visual reconstruction - sending actions for client rendering');
+                    
+                    // Send empty state first, then send actions to rebuild
+                    socket.emit('canvas-state', { 
+                        data: {
+                            isServerAuthoritative: true,
+                            isEmpty: true,
+                            needsReconstruction: true
+                        },
+                        isServerAuthoritative: true,
+                        timestamp: Date.now()
+                    });
+                    
+                    // Send drawing actions for client-side reconstruction
+                    socket.emit('drawing-history', {
+                        actions: this.drawingActions,
+                        isServerAuthoritative: true,
+                        forReconstruction: true,
+                        timestamp: Date.now()
+                    });
+                } else {
+                    // Send the authoritative state as-is
+                    socket.emit('canvas-state', { 
+                        data: authoritativeState,
+                        isServerAuthoritative: true,
+                        timestamp: Date.now()
+                    });
+                }
             } else {
                 console.log(`No authoritative state available, sending empty state to user ${userId}`);
                 socket.emit('canvas-state', { 
@@ -516,10 +565,11 @@ class SessionManager {
             
             // Also send recent drawing actions for real-time collaboration
             if (this.drawingActions.length > 0) {
-                const recentActions = this.drawingActions.slice(-100); // Last 100 actions
+                const recentActions = this.drawingActions.slice(-50); // Last 50 actions
                 socket.emit('drawing-history', {
                     actions: recentActions,
                     isServerAuthoritative: true,
+                    isRecentActions: true,
                     timestamp: Date.now()
                 });
             }

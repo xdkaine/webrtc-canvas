@@ -1284,16 +1284,20 @@ class OptimizedCollaborativeCanvas {
                 console.log('Processing server-authoritative canvas state');
                 
                 // For server-authoritative states, we trust the server completely
-                if (data.data.isEmpty) {
-                    console.log('Server reports empty canvas');
+                if (data.data.isEmpty || data.data.needsReconstruction) {
+                    console.log('Server reports empty canvas or needs reconstruction');
                     this.ctx.fillStyle = '#ffffff';
                     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    
+                    if (data.data.needsReconstruction) {
+                        console.log('Canvas will be reconstructed from drawing actions');
+                    }
                     return;
                 }
                 
                 // If server has authoritative data but no image, rebuild from actions
                 if (!data.data.imageData) {
-                    console.log('Server-authoritative state without image data - requesting rebuild');
+                    console.log('Server-authoritative state without image data - waiting for reconstruction');
                     // Set white background and wait for drawing actions
                     this.ctx.fillStyle = '#ffffff';
                     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -1347,15 +1351,47 @@ class OptimizedCollaborativeCanvas {
     }
 
     handleDrawingHistory(data) {
-        console.log('Received drawing history (real-time sync):', data.actions.length, 'actions');
+        console.log('Received drawing history:', data.actions.length, 'actions');
+        console.log('Is server authoritative:', data.isServerAuthoritative);
+        console.log('For reconstruction:', data.forReconstruction);
+        console.log('Is recent actions:', data.isRecentActions);
         
-        // Apply drawing actions for real-time collaboration only
-        // Canvas state should already be loaded from server
-        data.actions.forEach(action => {
-            if (action.type === 'drawing-data' && action.data) {
-                this.handleRemoteDrawing(action);
-            }
-        });
+        if (data.forReconstruction) {
+            console.log('Reconstructing canvas from server-authoritative drawing actions');
+            
+            // Clear canvas for reconstruction
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            // Reset remote drawing states for clean reconstruction
+            this.remoteDrawingStates.clear();
+            
+            // Apply all drawing actions in sequence for reconstruction
+            data.actions.forEach((action, index) => {
+                if (action.type === 'drawing-data' && action.data) {
+                    console.log(`Applying action ${index + 1}/${data.actions.length} for reconstruction`);
+                    this.handleRemoteDrawing(action);
+                }
+            });
+            
+            console.log('✅ Canvas reconstruction completed from server actions');
+        } else if (data.isRecentActions) {
+            // Apply recent actions for real-time collaboration only
+            // Canvas state should already be loaded from server
+            data.actions.forEach(action => {
+                if (action.type === 'drawing-data' && action.data) {
+                    this.handleRemoteDrawing(action);
+                }
+            });
+        } else {
+            // Legacy handling
+            data.actions.forEach(action => {
+                if (action.type === 'drawing-data' && action.data) {
+                    this.handleRemoteDrawing(action);
+                }
+            });
+        }
     }
 
     initializeCanvas() {
