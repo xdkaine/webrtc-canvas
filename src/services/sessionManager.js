@@ -8,6 +8,7 @@ const config = require('../config/config');
 const logger = require('../utils/logger');
 const memoryManager = require('../utils/memoryManager');
 const securityValidator = require('../utils/security');
+const canvasPersistence = require('./canvasPersistence');
 
 class SessionManager extends EventEmitter {
     constructor() {
@@ -449,6 +450,19 @@ class SessionManager extends EventEmitter {
             user.drawingCount++;
         }
 
+        // Save drawing command to authoritative canvas state
+        canvasPersistence.addDrawingCommand('main', {
+            type: 'startDrawing',
+            strokeId,
+            userId,
+            normalizedX: data.normalizedX,
+            normalizedY: data.normalizedY,
+            color: data.color || '#000000',
+            size: data.size || 5,
+            serverSequence: data.serverSequence,
+            serverTimestamp: data.serverTimestamp
+        });
+
         return {
             valid: true,
             data: {
@@ -510,6 +524,17 @@ class SessionManager extends EventEmitter {
         };
         drawingState.lastDrawTime = Date.now();
 
+        // Save drawing command to authoritative canvas state
+        canvasPersistence.addDrawingCommand('main', {
+            type: 'draw',
+            strokeId: drawingState.currentStroke,
+            userId,
+            normalizedX: data.normalizedX,
+            normalizedY: data.normalizedY,
+            serverSequence: data.serverSequence,
+            serverTimestamp: data.serverTimestamp
+        });
+
         return {
             valid: true,
             data: {
@@ -552,6 +577,15 @@ class SessionManager extends EventEmitter {
         drawingState.currentStroke = null;
         drawingState.lastPosition = null;
 
+        // Save drawing command to authoritative canvas state
+        canvasPersistence.addDrawingCommand('main', {
+            type: 'endDrawing',
+            strokeId,
+            userId,
+            serverSequence: data.serverSequence,
+            serverTimestamp: data.serverTimestamp
+        });
+
         return {
             valid: true,
             data: {
@@ -576,6 +610,14 @@ class SessionManager extends EventEmitter {
             drawingState.currentStroke = null;
             drawingState.lastPosition = null;
         }
+
+        // Save clear command to authoritative canvas state
+        canvasPersistence.addDrawingCommand('main', {
+            type: 'clear-canvas',
+            userId,
+            serverSequence: data.serverSequence,
+            serverTimestamp: data.serverTimestamp
+        });
 
         logger.info('Canvas cleared by user', { userId });
 
