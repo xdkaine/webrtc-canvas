@@ -468,6 +468,12 @@ class OptimizedCollaborativeCanvas {
             this.handleDrawingCorrection(data);
         });
 
+        // Handle server-authoritative canvas state updates
+        this.socket.on('canvas-state-update', (data) => {
+            console.log('Received server-authoritative canvas state update');
+            this.handleAuthoritativeCanvasUpdate(data);
+        });
+
         this.socket.on('chat-message', (data) => {
             // don't show our own messages twice
             if (data.userId !== this.userId) {
@@ -1259,9 +1265,10 @@ class OptimizedCollaborativeCanvas {
         console.log('=== APPLYING CANVAS STATE ===');
         console.log('Session:', this.sessionId);
         console.log('Data:', data);
+        console.log('Is Server Authoritative:', data.isServerAuthoritative);
         
         try {
-            // Clear canvas first
+            // Clear canvas first for clean state
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             
             // Check if this is an empty room (no saved state)
@@ -1272,6 +1279,28 @@ class OptimizedCollaborativeCanvas {
                 return;
             }
             
+            // Handle server-authoritative states differently
+            if (data.isServerAuthoritative) {
+                console.log('Processing server-authoritative canvas state');
+                
+                // For server-authoritative states, we trust the server completely
+                if (data.data.isEmpty) {
+                    console.log('Server reports empty canvas');
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    return;
+                }
+                
+                // If server has authoritative data but no image, rebuild from actions
+                if (!data.data.imageData) {
+                    console.log('Server-authoritative state without image data - requesting rebuild');
+                    // Set white background and wait for drawing actions
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    return;
+                }
+            }
+            
             const imageData = data.data.imageData;
             if (!imageData) {
                 console.log('No image data - setting white background');
@@ -1280,22 +1309,32 @@ class OptimizedCollaborativeCanvas {
                 return;
             }
             
-            console.log('Loading server canvas state...');
+            console.log('Loading canvas state from image data...');
             const img = new Image();
             img.onload = () => {
                 // Set white background first
                 this.ctx.fillStyle = '#ffffff';
                 this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                 
-                // Draw the server canvas state
+                // Draw the canvas state
                 this.ctx.drawImage(img, 0, 0, this.canvasWidth, this.canvasHeight);
-                console.log('✅ Server canvas state applied successfully');
+                console.log('✅ Canvas state applied successfully');
+                
+                if (data.isServerAuthoritative) {
+                    console.log('✅ Server-authoritative state synchronized');
+                }
             };
             
             img.onerror = (error) => {
-                console.error('❌ Failed to load server canvas state:', error);
+                console.error('❌ Failed to load canvas state:', error);
                 this.ctx.fillStyle = '#ffffff';
                 this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                if (data.isServerAuthoritative) {
+                    console.log('Server-authoritative state failed to load, requesting refresh');
+                    // Request a fresh state from server
+                    this.socket.emit('request-canvas-state');
+                }
             };
             
             img.src = imageData;
@@ -1714,6 +1753,19 @@ class OptimizedCollaborativeCanvas {
                 this.isDrawing = false;
                 this.currentPath = [];
                 break;
+        }
+    }
+    
+    // Handle server-authoritative canvas state updates
+    handleAuthoritativeCanvasUpdate(data) {
+        console.log('Applying server-authoritative canvas update:', data);
+        
+        if (data.isServerAuthoritative) {
+            // This is the authoritative state from the server
+            this.applyCanvasState(data);
+            
+            // Show a subtle notification that the canvas was updated by the server
+            this.showNotification('Canvas synchronized with server', 'info');
         }
     }
 

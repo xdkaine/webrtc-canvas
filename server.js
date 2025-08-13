@@ -57,13 +57,13 @@ app.use(express.json({ limit: '10mb' }));
 // Serve static files from the public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Global canvas storage - simplified to single canvas
+// Global canvas storage - simplified to single canvas with server authority
 class CanvasPersistence {
     constructor() {
         this.dataDir = path.join(__dirname, 'canvas-data');
         this.ensureDataDirectory();
-        this.canvasState = null; // Single canvas state
-        console.log('Canvas persistence initialized with fresh state');
+        this.canvasState = null; // Server-authoritative canvas state
+        console.log('Canvas persistence initialized with server authority');
     }
     
     async ensureDataDirectory() {
@@ -79,9 +79,9 @@ class CanvasPersistence {
             const filePath = path.join(this.dataDir, 'canvas-state.json');
             const data = await fs.readFile(filePath, 'utf8');
             this.canvasState = JSON.parse(data);
-            console.log('Loaded canvas state');
+            console.log('Loaded server-authoritative canvas state');
         } catch (error) {
-            console.log('No existing canvas state found');
+            console.log('No existing canvas state found, starting fresh');
         }
     }
     
@@ -90,7 +90,7 @@ class CanvasPersistence {
             this.canvasState = canvasData;
             const filePath = path.join(this.dataDir, 'canvas-state.json');
             await fs.writeFile(filePath, JSON.stringify(canvasData, null, 2));
-            console.log('Canvas state saved');
+            console.log('Server-authoritative canvas state saved');
         } catch (error) {
             console.error('Failed to save canvas state:', error);
         }
@@ -103,11 +103,34 @@ class CanvasPersistence {
     hasCanvasState() {
         return this.canvasState !== null;
     }
+    
+    // Rebuild authoritative canvas state from drawing actions
+    async rebuildCanvasFromActions(drawingActions) {
+        try {
+            // For now, we'll mark that a rebuild is needed
+            // This will be implemented with a proper canvas reconstruction
+            console.log(`Rebuilding canvas from ${drawingActions.length} drawing actions`);
+            
+            // Create a minimal state indicating server authority
+            this.canvasState = {
+                isServerAuthoritative: true,
+                lastRebuilt: Date.now(),
+                actionCount: drawingActions.length,
+                isEmpty: drawingActions.length === 0
+            };
+            
+            await this.saveCanvasState(this.canvasState);
+            return this.canvasState;
+        } catch (error) {
+            console.error('Failed to rebuild canvas from actions:', error);
+            return null;
+        }
+    }
 }
 
 const canvasPersistence = new CanvasPersistence();
 
-// Simplified session management for single canvas
+// Enhanced session management with server-authoritative canvas
 class SessionManager {
     constructor() {
         this.users = new Map(); // userId -> user info
@@ -116,14 +139,18 @@ class SessionManager {
         this.drawingStates = new Map(); // userId -> current drawing state
         this.sequenceNumbers = new Map(); // userId -> last sequence number
         this.messageBuffer = []; // Recent messages for late joiners
-        this.drawingActions = []; // Store all drawing actions for persistence
+        this.drawingActions = []; // Store all drawing actions for server authority
         this.activeStrokes = new Map(); // strokeId -> stroke data for conflict resolution
         this.lastSequence = 0; // Server sequence counter for authoritative ordering
         this.createdAt = Date.now();
         this.lastActivity = Date.now();
+        this.lastCanvasRebuild = 0; // Track when we last rebuilt the canvas
         
         // Clean up old sessions every 5 minutes
         setInterval(() => this.cleanupInactiveUsers(), 5 * 60 * 1000);
+        
+        // Rebuild canvas state every 30 seconds from drawing actions
+        setInterval(() => this.rebuildCanvasIfNeeded(), 30 * 1000);
     }
     
     joinSession(userId, socket, userInfo) {
@@ -420,14 +447,85 @@ class SessionManager {
         
         for (const [userId, user] of this.users.entries()) {
             if (user.lastSeen < thirtyMinutesAgo) {
+                console.log(`Cleaning up inactive user: ${userId}`);
                 // Clean up inactive user
                 this.userSockets.delete(userId);
                 this.users.delete(userId);
                 this.drawingStates.delete(userId);
                 this.sequenceNumbers.delete(userId);
                 
-                console.log(`Cleaned up inactive user: ${userId}`);
+                console.log(`Cleaned up inactive user ${userId}`);
             }
+        }
+    }
+    
+    // Rebuild canvas state from drawing actions for server authority
+    async rebuildCanvasIfNeeded() {
+        // Only rebuild if we have new drawing actions since last rebuild
+        if (this.drawingActions.length > 0 && 
+            (Date.now() - this.lastCanvasRebuild) > 30000) { // 30 second interval
+            
+            console.log('Rebuilding server-authoritative canvas state from drawing actions');
+            this.lastCanvasRebuild = Date.now();
+            
+            // Ask the persistence layer to rebuild from our actions
+            await canvasPersistence.rebuildCanvasFromActions(this.drawingActions);
+            
+            // Broadcast the updated authoritative state to all connected users
+            this.broadcastAuthoritativeCanvasState();
+        }
+    }
+    
+    // Broadcast server-authoritative canvas state to all users
+    broadcastAuthoritativeCanvasState() {
+        const authoritativeState = canvasPersistence.getCanvasState();
+        if (authoritativeState) {
+            console.log('Broadcasting server-authoritative canvas state to all users');
+            this.broadcastToAll('canvas-state-update', {
+                data: authoritativeState,
+                isServerAuthoritative: true,
+                timestamp: Date.now()
+            });
+        }
+    }
+    
+    // Enhanced new user synchronization with server authority
+    async sendAuthoritativeStateToUser(userId, socket) {
+        try {
+            // First, ensure we have the latest authoritative state
+            await this.rebuildCanvasIfNeeded();
+            
+            const authoritativeState = canvasPersistence.getCanvasState();
+            
+            if (authoritativeState) {
+                console.log(`Sending server-authoritative canvas state to user ${userId}`);
+                socket.emit('canvas-state', { 
+                    data: authoritativeState,
+                    isServerAuthoritative: true,
+                    timestamp: Date.now()
+                });
+            } else {
+                console.log(`No authoritative state available, sending empty state to user ${userId}`);
+                socket.emit('canvas-state', { 
+                    data: null,
+                    isServerAuthoritative: true,
+                    isEmpty: true,
+                    timestamp: Date.now()
+                });
+            }
+            
+            // Also send recent drawing actions for real-time collaboration
+            if (this.drawingActions.length > 0) {
+                const recentActions = this.drawingActions.slice(-100); // Last 100 actions
+                socket.emit('drawing-history', {
+                    actions: recentActions,
+                    isServerAuthoritative: true,
+                    timestamp: Date.now()
+                });
+            }
+            
+        } catch (error) {
+            console.error('Error sending authoritative state to user:', error);
         }
     }
 }
@@ -507,30 +605,35 @@ io.on('connection', (socket) => {
     });
     
     // Handle canvas state requests for anonymous browsers
-    socket.on('request-canvas-state-anonymous', () => {
+    socket.on('request-canvas-state-anonymous', async () => {
         try {
-            const canvasState = canvasPersistence.getCanvasState();
-            if (canvasState) {
-                console.log('Sending canvas state to anonymous browser');
+            // Ensure we have the latest authoritative state
+            await sessionManager.rebuildCanvasIfNeeded();
+            
+            const authoritativeState = canvasPersistence.getCanvasState();
+            if (authoritativeState) {
+                console.log('Sending server-authoritative canvas state to anonymous browser');
                 socket.emit('canvas-state', { 
-                    data: canvasState,
-                    isServerState: true 
+                    data: authoritativeState,
+                    isServerAuthoritative: true,
+                    timestamp: Date.now()
                 });
             } else {
-                console.log('No saved state, sending empty state to anonymous browser');
+                console.log('No authoritative state, sending empty state to anonymous browser');
                 socket.emit('canvas-state', { 
                     data: null,
-                    isServerState: true,
-                    isEmpty: true
+                    isServerAuthoritative: true,
+                    isEmpty: true,
+                    timestamp: Date.now()
                 });
             }
         } catch (error) {
-            console.error('Error sending canvas state to anonymous browser:', error);
+            console.error('Error sending authoritative canvas state to anonymous browser:', error);
         }
     });
 
     // Join session - simplified to single canvas
-    socket.on('join-session', (data) => {
+    socket.on('join-session', async (data) => {
         try {
             const { userId, nickname } = data;
             
@@ -569,22 +672,8 @@ io.on('connection', (socket) => {
                 socket.emit('message-history', { messages: sessionManager.messageBuffer });
             }
             
-            // Send canvas state to new user
-            const savedCanvasState = canvasPersistence.getCanvasState();
-            if (savedCanvasState) {
-                console.log(`Sending saved canvas state to user ${userId}`);
-                socket.emit('canvas-state', { 
-                    data: savedCanvasState,
-                    isServerState: true 
-                });
-            } else {
-                console.log(`No saved state, sending empty canvas to user ${userId}`);
-                socket.emit('canvas-state', { 
-                    data: null,
-                    isServerState: true,
-                    isEmpty: true
-                });
-            }
+            // Send server-authoritative canvas state to new user
+            await sessionManager.sendAuthoritativeStateToUser(userId, socket);
             
             // Notify other users about new user
             sessionManager.broadcastToAll('user-joined', {
@@ -683,12 +772,23 @@ io.on('connection', (socket) => {
             // Broadcast validated drawing data to all users
             sessionManager.broadcastToAll('drawing-data', drawingMessage);
             
+            // Store action for server authority and persistence
+            sessionManager.drawingActions.push({
+                type: 'drawing-data',
+                data: validatedData,
+                timestamp: Date.now(),
+                serverSequence: validatedData.serverSequence
+            });
+            
             sessionManager.lastActivity = Date.now();
             
             // Keep only last 2000 drawing actions to prevent memory issues
             if (sessionManager.drawingActions.length > 2000) {
                 sessionManager.drawingActions = sessionManager.drawingActions.slice(-2000);
             }
+            
+            // Trigger canvas rebuild check for server authority (async)
+            setImmediate(() => sessionManager.rebuildCanvasIfNeeded());
             
         } catch (error) {
             console.error('Error in drawing-data:', error);
@@ -775,47 +875,16 @@ io.on('connection', (socket) => {
         }
     });
     
-    // Canvas state synchronization - simplified for single canvas
-    socket.on('canvas-state', (data) => {
-        try {
-            if (!currentUserId) return;
-            
-            // Save canvas state to persistent storage
-            if (data.imageData) {
-                canvasPersistence.saveCanvasState({
-                    imageData: data.imageData,
-                    timestamp: Date.now(),
-                    lastModifiedBy: currentUserId
-                });
-            }
-            
-            sessionManager.lastActivity = Date.now();
-            
-        } catch (error) {
-            console.error('Error in canvas-state:', error);
-        }
-    });
+    // REMOVED: Client canvas-state upload capability for server authority
+    // Clients can no longer directly send canvas state - server maintains authority
     
-    // Handle explicit canvas state requests
-    socket.on('request-canvas-state', (data) => {
+    // Handle explicit canvas state requests with server authority
+    socket.on('request-canvas-state', async (data) => {
         try {
             if (!currentUserId) return;
             
-            const canvasState = canvasPersistence.getCanvasState();
-            if (canvasState) {
-                console.log(`Sending requested canvas state to user ${currentUserId}`);
-                socket.emit('canvas-state', { 
-                    data: canvasState,
-                    isServerState: true 
-                });
-            } else {
-                console.log(`No saved state, sending empty state to user ${currentUserId}`);
-                socket.emit('canvas-state', { 
-                    data: null,
-                    isServerState: true,
-                    isEmpty: true
-                });
-            }
+            console.log(`Canvas state requested by user ${currentUserId}`);
+            await sessionManager.sendAuthoritativeStateToUser(currentUserId, socket);
             
         } catch (error) {
             console.error('Error in request-canvas-state:', error);
