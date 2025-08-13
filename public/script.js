@@ -45,6 +45,7 @@ class OptimizedCollaborativeCanvas {
         this.clientSequence = 0; // Client sequence counter for conflict resolution
         this.lastServerSequence = 0; // Track server sequence for validation
         this.currentStrokeId = null; // Track current stroke for validation
+        this.unreadCount = 0; // Track unread chat messages
         
         // Drawing performance optimization
         this.drawThrottleMs = 16; // ~60fps
@@ -91,7 +92,6 @@ class OptimizedCollaborativeCanvas {
         this.initializeControls();
         this.initializeUserInterface();
         this.initializeChat();
-        this.initializeDraggableComponents();
         this.initializeCanvasPanning();
         this.initializeThemeSystem();
         
@@ -227,6 +227,9 @@ class OptimizedCollaborativeCanvas {
             
             this.nickname = this.sanitizeInput(inputValue).substring(0, 20);
             document.body.removeChild(modalOverlay);
+            
+            // Show chat bubble now that user has a nickname
+            this.showChatBubble();
             
             // Initialize networking components after nickname is set
             this.initializeWebSocket();
@@ -762,8 +765,10 @@ class OptimizedCollaborativeCanvas {
 
     // Optimized drawing data transmission
     broadcastDrawing(data) {
-        // For real-time drawing, send immediately instead of buffering
-        if (data.type === 'start-drawing' || data.type === 'draw' || data.type === 'end-drawing') {
+        // For real-time drawing, send immediately instead of buffering.
+        // BUGFIX: previously listened for start-drawing / end-drawing (with dashes) which never matched
+        // actual event types (startDrawing / endDrawing), causing latency (notably worse in Firefox).
+        if (data.type === 'startDrawing' || data.type === 'draw' || data.type === 'endDrawing') {
             this.sendDrawingDataImmediately(data);
             return;
         }
@@ -1179,43 +1184,56 @@ class OptimizedCollaborativeCanvas {
         
         console.log('Canvas context initialized with white background and color:', this.currentColor, 'size:', this.currentSize);
         
-        // Mouse events
-        this.canvas.addEventListener('mousedown', (e) => this.startDrawing(e));
-        this.canvas.addEventListener('mousemove', (e) => {
-            if (this.isDrawing) {
+        // Use Pointer Events for unified mouse/touch/pen handling (better in Firefox & Edge)
+        // Disable default touch actions (pinch-zoom, panning) on canvas
+        this.canvas.style.touchAction = 'none';
+
+        // Internal pointer tracking for smoothing
+        this.activePointerId = null;
+        this.lastPointerPoint = null;
+        this.smoothing = true; // simple quadratic smoothing toggle
+        this.smoothFactor = 0.5; // between 0 and 1
+
+        const pointerDown = (e) => {
+            if (this.activePointerId !== null) return; // single pointer drawing
+            this.activePointerId = e.pointerId;
+            this.canvas.setPointerCapture(e.pointerId);
+            this.startDrawing(e);
+            this.lastPointerPoint = { x: e.clientX, y: e.clientY };
+        };
+
+        const pointerMove = (e) => {
+            if (e.pointerId !== this.activePointerId) return;
+            if (!this.isDrawing) return;
+
+            // Optional smoothing to reduce jitter (noticeable in Firefox with high-frequency events)
+            if (this.smoothing && this.lastPointerPoint) {
+                const lerp = (a, b, t) => a + (b - a) * t;
+                const smoothedClientX = lerp(this.lastPointerPoint.x, e.clientX, this.smoothFactor);
+                const smoothedClientY = lerp(this.lastPointerPoint.y, e.clientY, this.smoothFactor);
+                const pseudoEvent = { ...e, clientX: smoothedClientX, clientY: smoothedClientY };
+                this.draw(pseudoEvent);
+                this.lastPointerPoint = { x: smoothedClientX, y: smoothedClientY };
+            } else {
                 this.draw(e);
+                this.lastPointerPoint = { x: e.clientX, y: e.clientY };
             }
             this.sendCursorPosition(e);
-        });
-        this.canvas.addEventListener('mouseup', () => this.stopDrawing());
-        this.canvas.addEventListener('mouseout', () => this.stopDrawing());
-        
-        // Touch events for mobile
-        this.canvas.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            const touch = e.touches[0];
-            const mouseEvent = new MouseEvent('mousedown', {
-                clientX: touch.clientX,
-                clientY: touch.clientY
-            });
-            this.canvas.dispatchEvent(mouseEvent);
-        });
-        
-        this.canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            const touch = e.touches[0];
-            const mouseEvent = new MouseEvent('mousemove', {
-                clientX: touch.clientX,
-                clientY: touch.clientY
-            });
-            this.canvas.dispatchEvent(mouseEvent);
-        });
-        
-        this.canvas.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            const mouseEvent = new MouseEvent('mouseup', {});
-            this.canvas.dispatchEvent(mouseEvent);
-        });
+        };
+
+        const pointerUpOrCancel = (e) => {
+            if (e.pointerId !== this.activePointerId) return;
+            this.stopDrawing();
+            try { this.canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+            this.activePointerId = null;
+            this.lastPointerPoint = null;
+        };
+
+        this.canvas.addEventListener('pointerdown', pointerDown);
+        this.canvas.addEventListener('pointermove', pointerMove);
+        this.canvas.addEventListener('pointerup', pointerUpOrCancel);
+        this.canvas.addEventListener('pointerleave', pointerUpOrCancel);
+        this.canvas.addEventListener('pointercancel', pointerUpOrCancel);
     }
 
     getCanvasCoordinates(e) {
@@ -1758,86 +1776,7 @@ class OptimizedCollaborativeCanvas {
 
 
     setupColorPicker() {
-        const colorTrigger = document.getElementById('colorTrigger');
-        const colorHexLabel = document.getElementById('colorHexLabel');
-        const colorHexInput = document.getElementById('colorHexInput');
-        const applyHexBtn = document.getElementById('applyHex');
-        const closeBtn = document.getElementById('closeColorPicker');
-        const hueRange = document.getElementById('hueRange');
-        const huePreview = document.getElementById('huePreview');
-        const pickerPreview = document.getElementById('pickerPreview');
-        
-        // Toggle color picker popover
-        if (colorTrigger) {
-            colorTrigger.addEventListener('click', () => {
-                const popover = document.getElementById('colorPopover');
-                if (popover) {
-                    popover.hidden = !popover.hidden;
-                    if (!popover.hidden) {
-                        this.updateColorPickerFromCurrent();
-                    }
-                }
-            });
-        }
-        
-        // Close button
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => {
-                const popover = document.getElementById('colorPopover');
-                if (popover) popover.hidden = true;
-            });
-        }
-        
-        // Hue range slider
-        if (hueRange && huePreview && pickerPreview) {
-            hueRange.addEventListener('input', (e) => {
-                const hue = parseInt(e.target.value);
-                const hslColor = `hsl(${hue}, 100%, 50%)`;
-                const hexColor = this.hslToHex(hue, 100, 50);
-                
-                huePreview.style.backgroundColor = hslColor;
-                pickerPreview.style.backgroundColor = hexColor;
-                
-                if (colorHexInput) {
-                    colorHexInput.value = hexColor;
-                }
-            });
-        }
-        
-        // Hex input handling
-        if (colorHexInput && applyHexBtn) {
-            const applyHexColor = () => {
-                const hexValue = colorHexInput.value.trim();
-                if (this.isValidHexColor(hexValue)) {
-                    this.currentColor = hexValue;
-                    this.updateColorDisplay(hexValue);
-                    this.updateDrawingProperties();
-                    this.updateBrushPreview();
-                    // Close popover after applying
-                    const popover = document.getElementById('colorPopover');
-                    if (popover) popover.hidden = true;
-                }
-            };
-            
-            applyHexBtn.addEventListener('click', applyHexColor);
-            colorHexInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    applyHexColor();
-                }
-            });
-            
-            // Real-time hex input validation
-            colorHexInput.addEventListener('input', (e) => {
-                const hexValue = e.target.value.trim();
-                if (this.isValidHexColor(hexValue)) {
-                    if (pickerPreview) {
-                        pickerPreview.style.backgroundColor = hexValue;
-                    }
-                }
-            });
-        }
-        
-        // Color swatches with improved feedback
+        // Color swatches handling
         const swatches = document.querySelectorAll('.swatch');
         swatches.forEach(swatch => {
             swatch.addEventListener('click', () => {
@@ -1854,41 +1793,6 @@ class OptimizedCollaborativeCanvas {
                 console.log('Color changed to:', color);
             });
         });
-        
-        // Close popover when clicking outside
-        document.addEventListener('click', (e) => {
-            const popover = document.getElementById('colorPopover');
-            const trigger = document.getElementById('colorTrigger');
-            if (popover && !popover.hidden && !popover.contains(e.target) && e.target !== trigger) {
-                popover.hidden = true;
-            }
-        });
-    }
-
-    // Helper function to convert HSL to Hex
-    hslToHex(h, s, l) {
-        l /= 100;
-        const a = s * Math.min(l, 1 - l) / 100;
-        const f = n => {
-            const k = (n + h / 30) % 12;
-            const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-            return Math.round(255 * color).toString(16).padStart(2, '0');
-        };
-        return `#${f(0)}${f(8)}${f(4)}`;
-    }
-
-    // Update color picker from current color
-    updateColorPickerFromCurrent() {
-        const colorHexInput = document.getElementById('colorHexInput');
-        const pickerPreview = document.getElementById('pickerPreview');
-        
-        if (colorHexInput) {
-            colorHexInput.value = this.currentColor;
-        }
-        
-        if (pickerPreview) {
-            pickerPreview.style.backgroundColor = this.currentColor;
-        }
     }
 
     setupBrushControls() {
@@ -1967,25 +1871,7 @@ class OptimizedCollaborativeCanvas {
     }
 
     updateColorDisplay(color) {
-        const colorHexLabel = document.getElementById('colorHexLabel');
-        const colorTrigger = document.getElementById('colorTrigger');
-        const colorHexInput = document.getElementById('colorHexInput');
         const brushPreview = document.getElementById('brushPreviewCircle');
-        
-        if (colorHexLabel) {
-            colorHexLabel.textContent = color;
-        }
-        
-        if (colorTrigger) {
-            const dot = colorTrigger.querySelector('.trigger-dot');
-            if (dot) {
-                dot.style.setProperty('--c', color);
-            }
-        }
-        
-        if (colorHexInput) {
-            colorHexInput.value = color;
-        }
         
         if (brushPreview) {
             brushPreview.style.backgroundColor = color;
@@ -2111,20 +1997,60 @@ class OptimizedCollaborativeCanvas {
     }
 
     setupChatToggle() {
-        const chatToggle = document.getElementById('chatToggle');
-        const chatContainer = document.getElementById('chatContainer');
+        const chatFloatingBtn = document.getElementById('chatFloatingBtn');
+        const chatPopup = document.getElementById('chatPopup');
+        const closeChatPopup = document.getElementById('closeChatPopup');
         
-        if (chatToggle && chatContainer) {
-            chatToggle.addEventListener('click', () => {
-                const isCollapsed = chatContainer.classList.contains('collapsed');
-                if (isCollapsed) {
-                    chatContainer.classList.remove('collapsed');
-                    chatToggle.textContent = '▼';
+        if (chatFloatingBtn && chatPopup && closeChatPopup) {
+            // Open chat popup
+            chatFloatingBtn.addEventListener('click', () => {
+                const isOpen = chatPopup.style.display === 'flex';
+                if (isOpen) {
+                    chatPopup.style.display = 'none';
+                    chatFloatingBtn.setAttribute('aria-expanded', 'false');
                 } else {
-                    chatContainer.classList.add('collapsed');
-                    chatToggle.textContent = '▶';
+                    chatPopup.style.display = 'flex';
+                    chatFloatingBtn.setAttribute('aria-expanded', 'true');
+                    this.unreadCount = 0;
+                    this.hideUnreadBadge();
                 }
             });
+            
+            // Close chat popup
+            closeChatPopup.addEventListener('click', () => {
+                chatPopup.style.display = 'none';
+                chatFloatingBtn.setAttribute('aria-expanded', 'false');
+            });
+            
+            // Close popup when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!chatPopup.contains(e.target) && !chatFloatingBtn.contains(e.target)) {
+                    chatPopup.style.display = 'none';
+                    chatFloatingBtn.setAttribute('aria-expanded', 'false');
+                }
+            });
+        }
+    }
+
+    showChatBubble() {
+        const chatFloatingBtn = document.getElementById('chatFloatingBtn');
+        if (chatFloatingBtn) {
+            chatFloatingBtn.style.display = 'block';
+        }
+    }
+
+    showUnreadBadge(count) {
+        const badge = document.getElementById('unreadBadge');
+        if (badge && count > 0) {
+            badge.textContent = count;
+            badge.style.display = 'flex';
+        }
+    }
+
+    hideUnreadBadge() {
+        const badge = document.getElementById('unreadBadge');
+        if (badge) {
+            badge.style.display = 'none';
         }
     }
 
@@ -2197,37 +2123,17 @@ class OptimizedCollaborativeCanvas {
         }
     }
 
-    setupChatTabs() {
-        const tabButtons = document.querySelectorAll('.tab-btn');
-        const chatTab = document.getElementById('chatTab');
-        const usersTab = document.getElementById('usersTab');
-        
-        tabButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tabType = btn.dataset.tab;
-                
-                // Update active tab button
-                tabButtons.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                
-                // Show/hide appropriate content
-                if (tabType === 'chat') {
-                    chatTab.classList.remove('hidden');
-                    usersTab.classList.add('hidden');
-                } else if (tabType === 'users') {
-                    chatTab.classList.add('hidden');
-                    usersTab.classList.remove('hidden');
-                    // Update users list when switching to users tab
-                    this.updateUsersList();
-                }
-            });
-        });
-    }
-
     addChatMessage(data) {
-        // Add to both regular chat and draggable chat
+        // Add to chat container
         this.addChatMessageToContainer('chatMessages', data);
-        this.addChatMessageToContainer('chatMessagesDrag', data);
+        
+        // Check if chat popup is visible and show unread badge if not
+        const chatPopup = document.getElementById('chatPopup');
+        if (chatPopup && chatPopup.style.display === 'none') {
+            if (!this.unreadCount) this.unreadCount = 0;
+            this.unreadCount++;
+            this.showUnreadBadge(this.unreadCount);
+        }
     }
     
     addChatMessageToContainer(containerId, data) {
@@ -2288,8 +2194,7 @@ class OptimizedCollaborativeCanvas {
     
     scrollChatToBottom(container = null) {
         const containers = container ? [container] : [
-            document.getElementById('chatMessages'),
-            document.getElementById('chatMessagesDrag')
+            document.getElementById('chatMessages')
         ];
         
         containers.forEach(chatMessages => {

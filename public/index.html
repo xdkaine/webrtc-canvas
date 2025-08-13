@@ -1,39 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    
-    <!-- Primary Meta Tags -->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Persistent Collaborative Canvas - Global Drawing Board</title>
-    <meta name="title" content="Persistent Collaborative Canvas - Global Drawing Board">
-    <meta name="description" content="A persistent, real-time collaborative drawing canvas. All drawings are saved forever - join anytime to see and add to the global artwork created by users worldwide.">
-    <meta name="keywords" content="WebRTC, collaborative drawing, real-time canvas, online whiteboard, drawing app, collaboration tool, multi-user drawing, web canvas, socket.io, live drawing">
-    <meta name="author" content="WebRTC Canvas">
-    <meta name="robots" content="index, follow">
-    
-    <!-- Open Graph / Facebook -->
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://canvas.republicofgaming.xyz/">
-    <meta property="og:title" content="Persistent Collaborative Canvas - Global Drawing Board">
-    <meta property="og:description" content="Join the global canvas! Draw together in real-time with persistent storage. All artwork is saved forever and visible to everyone who joins.">
-    <meta property="og:image" content="https://canvas.republicofgaming.xyz/og-image.png">
-    
-    <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="https://canvas.republicofgaming.xyz/">
-    <meta property="twitter:title" content="WebRTC Collaborative Canvas - Real-time Drawing & Collaboration">
-    <meta property="twitter:description" content="Draw together in real-time! High-performance collaborative canvas with WebRTC technology for ultra-low latency multi-user drawing experience.">
-    <meta property="twitter:image" content="https://canvas.republicofgaming.xyz/og-image.png">
-    
-    <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    
-    <!-- CSS -->
-    <link rel="stylesheet" href="style.css">
+    <meta name="description" content="A persistent, real-time collaborative drawing canvas. All drawings are saved forever." />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <!-- Immediate loading screen -->
     <div id="initialLoader" class="initial-loader">
         <div class="loader-content">
             <div class="logo">🎨</div>
@@ -42,13 +17,10 @@
             <div class="loading-spinner"></div>
         </div>
     </div>
-    
-    <div class="app" style="display: none;" id="mainApp">
+
+    <div id="mainApp" class="app" style="display:none;">
         <header class="topbar">
-            <div class="brand">
-                <span class="logo" aria-hidden="true">🎨</span>
-                <h1 class="title">Collaborative Canvas</h1>
-            </div>
+            <div class="brand"><span class="logo" aria-hidden="true">🎨</span><h1 class="title">Collaborative Canvas</h1></div>
             <div class="status">
                 <div class="theme-switcher">
                     <button class="theme-btn active" data-theme="dark" title="Dark Theme">Dark</button>
@@ -63,27 +35,8 @@
         <div class="workspace">
             <aside class="sidebar" aria-label="Canvas tools">
                 <div class="panel">
-                    <!-- Quick Compact Color Bar -->
-                    <div class="quick-palette" aria-label="Quick colors">
-                        <button class="swatch swatch-circle" style="--sw:#000000" data-color="#000000" title="Black"></button>
-                        <button class="swatch swatch-circle" style="--sw:#ffffff" data-color="#ffffff" title="White"></button>
-                        <button class="swatch swatch-circle" style="--sw:#ef4444" data-color="#ef4444" title="Red"></button>
-                        <button class="swatch swatch-circle" style="--sw:#f59e0b" data-color="#f59e0b" title="Orange"></button>
-                        <button class="swatch swatch-circle" style="--sw:#eab308" data-color="#eab308" title="Yellow"></button>
-                        <button class="swatch swatch-circle" style="--sw:#22c55e" data-color="#22c55e" title="Green"></button>
-                        <button class="swatch swatch-circle" style="--sw:#06b6d4" data-color="#06b6d4" title="Cyan"></button>
-                        <button class="swatch swatch-circle" style="--sw:#3b82f6" data-color="#3b82f6" title="Blue"></button>
-                        <button class="swatch swatch-circle" style="--sw:#8b5cf6" data-color="#8b5cf6" title="Purple"></button>
-                        <button class="swatch swatch-circle" style="--sw:#ec4899" data-color="#ec4899" title="Pink"></button>
-                    </div>
-                    
                     <div class="group">
-                        <label for="colorPicker" class="label">Color</label>
-                        <input type="hidden" id="colorPicker" value="#000000" aria-label="Pick brush color">
-                        <button id="colorTrigger" class="color-trigger" type="button">
-                            <span class="trigger-dot" style="--c:#000000"></span>
-                            <span id="colorHexLabel" class="trigger-hex">#000000</span>
-                        </button>
+                        <label class="label">Colors</label>
                         <div class="color-palette" aria-label="Color palette">
                             <div class="palette-row">
                                 <button class="swatch" style="--sw:#000000" data-color="#000000" title="Black"></button>
@@ -115,10 +68,80 @@
                             </div>
                         </div>
                     </div>
-
                     <div class="group">
                         <label for="brushSize" class="label">Brush Size</label>
                         <div class="brush-controls">
+                            <div class="range-container">
+                                <button id="sizeDec" class="size-btn" aria-label="Decrease size" title="Decrease">−</button>
+                                <input type="range" id="brushSize" min="1" max="50" value="5" aria-label="Brush size" />
+                                <button id="sizeInc" class="size-btn" aria-label="Increase size" title="Increase">+</button>
+                            </div>
+                            <div class="size-display"><span id="sizeValue" class="size-chip">5</span><span class="px">px</span></div>
+                        </div>
+                        <div class="quick-sizes">
+                            <button class="size-quick" data-size="2">2px</button>
+                            <button class="size-quick" data-size="5">5px</button>
+                            <button class="size-quick" data-size="10">10px</button>
+                            <button class="size-quick" data-size="20">20px</button>
+                            <button class="size-quick" data-size="35">35px</button>
+                        </div>
+                    </div>
+                    <div class="group">
+                        <button id="paintBucket" class="btn btn-secondary" title="Fill canvas background">🪣 Paint Bucket</button>
+                        <button id="clearCanvas" class="btn btn-danger" title="Clear for everyone">Clear Canvas</button>
+                    </div>
+                    <div class="group preview-card" aria-label="Brush preview">
+                        <div class="preview-row"><div id="brushPreviewCircle" class="preview-dot"></div><div class="preview-text">Live brush preview</div></div>
+                    </div>
+                    <div class="tips">
+                        <p>💡 <strong>Tip:</strong> Press and drag to draw. Change color and size on the fly.</p>
+                        <p>💬 <strong>Chat:</strong> Use the floating chat bubble on the right edge to open chat & users list. It shows a red badge when there are unread messages.</p>
+                    </div>
+                </div>
+            </aside>
+            <main class="canvas-area">
+                <div class="canvas-frame" id="canvasFrame">
+                    <div class="canvas-container">
+                        <div class="grid-bg"></div>
+                        <canvas id="drawingCanvas" width="2000" height="1200"></canvas>
+                    </div>
+                </div>
+                <div id="zoomIndicator" class="zoom-indicator">100%</div>
+            </main>
+        </div>
+
+        <button id="chatFloatingBtn" class="floating-chat-btn" title="Open Chat & Users" aria-controls="chatPopup" aria-expanded="false" style="display: none;">💬<span id="unreadBadge" class="unread-badge" style="display:none;">0</span></button>
+
+        <div id="chatPopup" class="chat-popup" style="display:none;" role="dialog" aria-modal="false" aria-label="Chat and Users">
+            <div class="chat-popup-header">
+                <div class="chat-popup-title">💬 Chat & Users</div>
+                <button id="closeChatPopup" class="close-btn" title="Close" aria-label="Close chat">×</button>
+            </div>
+            <div class="chat-popup-content">
+                <div class="chat-tabs">
+                    <button class="chat-tab-btn active" data-tab="chat">Chat</button>
+                    <button class="chat-tab-btn" data-tab="users">Users</button>
+                </div>
+                <div class="chat-content">
+                    <div id="chatTab" class="tab-panel active">
+                        <div id="chatMessages" class="chat-messages"></div>
+                        <div class="chat-input-row">
+                            <input id="chatInput" type="text" placeholder="Type a message..." maxlength="200" />
+                            <button id="sendMessage" class="send-btn" title="Send message" aria-label="Send message">→</button>
+                        </div>
+                    </div>
+                    <div id="usersTab" class="tab-panel"><div id="usersList" class="users-list"></div></div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer"><div class="info">Built by Kaine ❤️ | Draw together in real-time with WebRTC</div></footer>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
                             <div class="range-container">
                                 <button id="sizeDec" class="size-btn" aria-label="Decrease size" title="Decrease">−</button>
                                 <input type="range" id="brushSize" min="1" max="50" value="5" aria-label="Brush size">
@@ -147,32 +170,6 @@
                         <div class="preview-row">
                             <div id="brushPreviewCircle" class="preview-dot"></div>
                             <div class="preview-text">Live brush preview</div>
-                        </div>
-                    </div>
-
-                    <!-- Chat Section -->
-                    <div class="group chat-section">
-                        <div class="label-row">
-                            <label class="label">💬 Chat & Users</label>
-                            <button id="chatToggle" class="toggle-btn" title="Toggle chat">▼</button>
-                        </div>
-                        <div id="chatContainer" class="chat-container">
-                            <div class="chat-tabs">
-                                <button class="chat-tab-btn active" data-tab="chat">Chat</button>
-                                <button class="chat-tab-btn" data-tab="users">Users</button>
-                            </div>
-                            <div class="chat-content">
-                                <div id="chatTab" class="tab-panel active">
-                                    <div id="chatMessages" class="chat-messages"></div>
-                                    <div class="chat-input-row">
-                                        <input type="text" id="chatInput" placeholder="Type a message..." maxlength="200">
-                                        <button id="sendMessage" class="send-btn" title="Send message">→</button>
-                                    </div>
-                                </div>
-                                <div id="usersTab" class="tab-panel">
-                                    <div id="usersList" class="users-list"></div>
-                                </div>
-                            </div>
                         </div>
                     </div>
 
@@ -195,165 +192,6 @@
 
         <footer class="footer">
             <div class="info">Built by Kaine ❤️ | Draw together in real-time with WebRTC</div>
-        </footer>
-    </div>
-
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js"></script>
-</body>
-</html>
-                        <div class="brush-controls">
-                            <div class="range-container">
-                                <button id="sizeDec" class="size-btn" aria-label="Decrease size" title="Decrease">−</button>
-                                <input type="range" id="brushSize" min="1" max="50" value="5" aria-label="Brush size">
-                                <button id="sizeInc" class="size-btn" aria-label="Increase size" title="Increase">+</button>
-                            </div>
-                            <div class="size-display">
-                                <span id="sizeValue" class="size-chip">5</span>
-                                <span class="px">px</span>
-                            </div>
-                        </div>
-                        <div class="quick-sizes">
-                            <button class="size-quick" data-size="2">2px</button>
-                            <button class="size-quick" data-size="5">5px</button>
-                            <button class="size-quick" data-size="10">10px</button>
-                            <button class="size-quick" data-size="20">20px</button>
-                            <button class="size-quick" data-size="35">35px</button>
-                        </div>
-                    </div>
-
-                    <div class="group">
-                        <button id="paintBucket" class="btn btn-secondary" title="Fill canvas background">🪣 Paint Bucket</button>
-                        <button id="clearCanvas" class="btn btn-danger" title="Clear for everyone">Clear Canvas</button>
-                    </div>
-
-                    <div class="group preview-card" aria-label="Brush preview">
-                        <div class="preview-row">
-                            <div id="brushPreviewCircle" class="preview-dot"></div>
-                            <div class="preview-text">Live brush preview</div>
-                        </div>
-                    </div>
-
-                    <!-- Chat Section (restyled container) -->
-                    <div class="group chat-section chat-pane">
-                        <div class="label-row">
-                            <label class="label">💬 Chat & Users</label>
-                            <button id="chatToggle" class="toggle-btn" title="Toggle chat">▼</button>
-                        </div>
-                        <div id="chatContainer" class="chat-container">
-                            <div class="chat-tabs">
-                                <button class="chat-tab-btn active" data-tab="chat">Chat</button>
-                                <button class="chat-tab-btn" data-tab="users">Users</button>
-                            </div>
-                            <div class="chat-content">
-                                <div id="chatTab" class="tab-panel active">
-                                    <div id="chatMessages" class="chat-messages"></div>
-                                    <div class="chat-input-row">
-                                        <input type="text" id="chatInput" placeholder="Type a message..." maxlength="200">
-                                        <button id="sendMessage" class="send-btn" title="Send message">
-                                            <span>→</span>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div id="usersTab" class="tab-panel">
-                                    <div id="usersList" class="users-list"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="tips">
-                        <p>💡 <strong>Tip:</strong> Press and drag to draw. Change color and size on the fly.</p>
-                    </div>
-                </div>
-            </aside>
-
-            <main class="canvas-area">
-                <div class="canvas-frame" id="canvasFrame">
-                    <div class="canvas-container">
-                        <div class="grid-bg"></div>
-                        <canvas id="drawingCanvas" width="2000" height="1200"></canvas>
-                    </div>
-                </div>
-            </main>
-        </div>
-
-        <!-- Draggable Color Picker Component -->
-        <div id="colorPickerComponent" class="draggable-component color-picker-component" style="display: none;">
-            <div class="component-header">
-                <div class="component-title">🎨 Color Picker</div>
-                <div class="component-controls">
-                    <button class="component-btn" id="minimizeColorPicker" title="Minimize">−</button>
-                    <button class="component-btn" id="closeColorPickerComponent" title="Close">×</button>
-                </div>
-            </div>
-            <div class="component-content">
-                <div class="group">
-                    <label for="colorPickerDrag" class="label">Current Color</label>
-                    <input type="hidden" id="colorPickerDrag" value="#000000" aria-label="Pick brush color">
-                    <button id="colorTriggerDrag" class="color-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="colorPopoverDrag">
-                        <span class="trigger-dot" style="--c:#000000"></span>
-                        <span id="colorHexLabelDrag" class="trigger-hex">#000000</span>
-                    </button>
-                    <div class="color-palette" aria-label="Color palette">
-                        <div class="palette-row">
-                            <button class="swatch" style="--sw:#000000" data-color="#000000" title="Black"></button>
-                            <button class="swatch" style="--sw:#ffffff" data-color="#ffffff" title="White"></button>
-                            <button class="swatch" style="--sw:#ef4444" data-color="#ef4444" title="Red"></button>
-                            <button class="swatch" style="--sw:#f59e0b" data-color="#f59e0b" title="Orange"></button>
-                            <button class="swatch" style="--sw:#eab308" data-color="#eab308" title="Yellow"></button>
-                        </div>
-                        <div class="palette-row">
-                            <button class="swatch" style="--sw:#22c55e" data-color="#22c55e" title="Green"></button>
-                            <button class="swatch" style="--sw:#06b6d4" data-color="#06b6d4" title="Cyan"></button>
-                            <button class="swatch" style="--sw:#3b82f6" data-color="#3b82f6" title="Blue"></button>
-                            <button class="swatch" style="--sw:#8b5cf6" data-color="#8b5cf6" title="Purple"></button>
-                            <button class="swatch" style="--sw:#ec4899" data-color="#ec4899" title="Pink"></button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Draggable Chat Component -->
-        <div id="chatComponent" class="draggable-component chat-component" style="display: none;">
-            <div class="component-header">
-                <div class="component-title">💬 Chat & Users</div>
-                <div class="component-controls">
-                    <button class="component-btn" id="minimizeChat" title="Minimize">−</button>
-                    <button class="component-btn" id="closeChatComponent" title="Close">×</button>
-                </div>
-            </div>
-            <div class="component-content">
-                <div class="chat-tabs">
-                    <button class="chat-tab-btn active" data-tab="chatDrag">Chat</button>
-                    <button class="chat-tab-btn" data-tab="usersDrag">Users</button>
-                </div>
-                <div class="chat-content">
-                    <div id="chatTabDrag" class="tab-panel active">
-                        <div id="chatMessagesDrag" class="chat-messages"></div>
-                        <div class="chat-input-row">
-                            <input type="text" id="chatInputDrag" placeholder="Type a message..." maxlength="200">
-                            <button id="sendMessageDrag" class="send-btn" title="Send message">
-                                <span>→</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="usersTabDrag" class="tab-panel">
-                        <div id="usersListDrag" class="users-list"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Toolbar for toggling components -->
-        <div id="componentToolbar" class="component-toolbar">
-            <button id="toggleColorPicker" class="toolbar-btn" title="Toggle Color Picker">🎨</button>
-            <button id="toggleChat" class="toolbar-btn" title="Toggle Chat">💬</button>
-        </div>
-
-        <footer class="footer">
-            <div class="info">Built by Kaine ❤️ ☕ | Draw together in real-time with WebRTC</div>
         </footer>
     </div>
 
