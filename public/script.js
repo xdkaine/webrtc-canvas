@@ -1572,6 +1572,18 @@ class OptimizedCollaborativeCanvas {
         // Disable default touch actions (pinch-zoom, panning) on canvas
         this.canvas.style.touchAction = 'none';
 
+        // Disable right-click context menu on the entire page
+        document.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            return false;
+        });
+
+        // Also specifically disable it on the canvas
+        this.canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            return false;
+        });
+
         // Internal pointer tracking for smoothing
         this.activePointerId = null;
         this.lastPointerPoint = null;
@@ -2432,29 +2444,64 @@ class OptimizedCollaborativeCanvas {
         cursor.style.width = this.currentSize + 'px';
         cursor.style.height = this.currentSize + 'px';
         cursor.style.display = 'none';
+        // Set border color to contrast with current brush color
+        const rgb = this.hexToRgb(this.currentColor);
+        const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+        cursor.style.borderColor = brightness > 128 ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
         
         document.body.appendChild(cursor);
         
+        // Store cursor reference for easier access
+        this.brushCursor = cursor;
+        
         // Update canvas cursor behavior - keep cursor visible during drawing
         if (this.canvas) {
-            this.canvas.addEventListener('mouseenter', () => {
-                cursor.style.display = 'block';
-                this.canvas.style.cursor = 'none';
-            });
+            // Remove any existing event listeners to prevent duplicates
+            this.canvas.removeEventListener('mouseenter', this.handleCanvasMouseEnter);
+            this.canvas.removeEventListener('mouseleave', this.handleCanvasMouseLeave);
+            this.canvas.removeEventListener('mousemove', this.handleCanvasMouseMove);
             
-            this.canvas.addEventListener('mouseleave', () => {
-                cursor.style.display = 'none';
-                this.canvas.style.cursor = 'crosshair';
-            });
+            // Bind event handlers to maintain 'this' context
+            this.handleCanvasMouseEnter = () => {
+                if (this.brushCursor) {
+                    this.brushCursor.style.display = 'block';
+                    this.canvas.style.cursor = 'none';
+                }
+            };
             
-            this.canvas.addEventListener('mousemove', (e) => {
-                const rect = this.canvas.getBoundingClientRect();
-                cursor.style.left = e.clientX + 'px';
-                cursor.style.top = e.clientY + 'px';
-                // Keep cursor visible during drawing
-                cursor.style.display = 'block';
-            });
+            this.handleCanvasMouseLeave = () => {
+                if (this.brushCursor) {
+                    this.brushCursor.style.display = 'none';
+                    // Keep cursor as none when drawing, otherwise show crosshair
+                    this.canvas.style.cursor = this.isDrawing ? 'none' : 'crosshair';
+                }
+            };
+            
+            this.handleCanvasMouseMove = (e) => {
+                if (this.brushCursor) {
+                    // Position cursor at mouse position (already centered with CSS transform)
+                    this.brushCursor.style.left = e.clientX + 'px';
+                    this.brushCursor.style.top = e.clientY + 'px';
+                    this.brushCursor.style.display = 'block';
+                    this.canvas.style.cursor = 'none';
+                }
+            };
+            
+            // Add event listeners
+            this.canvas.addEventListener('mouseenter', this.handleCanvasMouseEnter);
+            this.canvas.addEventListener('mouseleave', this.handleCanvasMouseLeave);
+            this.canvas.addEventListener('mousemove', this.handleCanvasMouseMove);
         }
+    }
+
+    // Helper function to convert hex to RGB
+    hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+        } : { r: 0, g: 0, b: 0 };
     }
 
     clearCanvas() {
