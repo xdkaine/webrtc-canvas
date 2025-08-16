@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Canvas</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <div id="modal-overlay">
+            <div id="nickname-modal">
+                <h2>Welcome to the Canvas!</h2>
+                <p>Enter your name to start collaborating.</p>
+                <input type="text" id="nickname-input" placeholder="Your Name" maxlength="20">
+                <button id="join-btn">Join</button>
+            </div>
+        </div>
+
+        <header>
+            <div class="logo">
+                <h1>Collaborative Canvas</h1>
+            </div>
+            <div id="users-online">
+                <span id="user-count">0</span> users online
+            </div>
+        </header>
+
+        <main>
+            <div id="canvas-container">
+                <canvas id="canvas"></canvas>
+                <div id="cursor"></div>
+            </div>
+        </main>
+
+        <aside id="sidebar">
+            <div id="toolbar">
+                <div class="tool-section">
+                    <h3>Tools</h3>
+                    <div class="tool-group" id="brush-tools">
+                        <button id="pen-tool" class="tool-btn active" data-tool="pen" title="Pen">🖊️</button>
+                        <button id="eraser-tool" class="tool-btn" data-tool="eraser" title="Eraser">🧼</button>
+                    </div>
+                </div>
+
+                <div class="tool-section">
+                    <h3>Color</h3>
+                    <div id="color-palette" class="tool-group">
+                        <!-- Colors will be injected by JS -->
+                    </div>
+                    <input type="color" id="color-picker" value="#000000">
+                </div>
+
+                <div class="tool-section">
+                    <h3>Brush Size</h3>
+                    <div class="tool-group">
+                        <input type="range" id="brush-size" min="1" max="50" value="5">
+                        <span id="size-value">5</span>
+                    </div>
+                    <div class="tool-group" id="quick-sizes">
+                        <button class="size-btn" data-size="2">2</button>
+                        <button class="size-btn" data-size="5">5</button>
+                        <button class="size-btn" data-size="10">10</button>
+                        <button class="size-btn" data-size="20">20</button>
+                        <button class="size-btn" data-size="40">40</button>
+                    </div>
+                </div>
+                
+                <div class="tool-section">
+                    <button id="clear-btn">Clear Canvas</button>
+                </div>
+            </div>
+            <div id="sidebar-tabs">
+                <button id="chat-tab" class="tab-btn active">Chat</button>
+                <button id="users-tab" class="tab-btn">Users</button>
+            </div>
+            <div id="chat-content" class="tab-content active">
+                <div id="chat-messages"></div>
+                <div id="emoji-picker" class="hidden"></div>
+                <div id="chat-input-container">
+                    <button id="emoji-btn">😀</button>
+                    <input type="text" id="chat-input" placeholder="Type a message..." maxlength="100">
+                    <button id="send-btn">Send</button>
+                </div>
+            </div>
+            <div id="users-content" class="tab-content">
+                <ul id="users-list"></ul>
+            </div>
+        </aside>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
