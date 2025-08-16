@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Persistent Collaborative Canvas - Global Drawing Board</title>
+    <meta name="description" content="A persistent, real-time collaborative drawing canvas. All drawings are saved forever." />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div id="initialLoader" class="initial-loader">
+        <div class="loader-content">
+            <div class="logo">🎨</div>
+            <h2>Collaborative Canvas</h2>
+            <p>Loading your drawing space...</p>
+            <div class="loading-spinner"></div>
+        </div>
+    </div>
+
+    <div id="mainApp" class="app" style="display:none;">
+        <header class="topbar">
+            <div class="brand"><span class="logo" aria-hidden="true">🎨</span><h1 class="title">Collaborative Canvas</h1></div>
+            <div class="status">
+                <div class="theme-switcher">
+                    <button class="theme-btn active" data-theme="dark" title="Dark Theme">Dark</button>
+                    <button class="theme-btn" data-theme="light" title="Light Theme">Light</button>
+                    <button class="theme-btn" data-theme="blue" title="Blue Theme">Blue</button>
+                </div>
+                <span id="connectionStatus" class="connecting" aria-live="polite">Connecting...</span>
+                <span id="userCount" class="muted" aria-live="polite">0 users online</span>
+            </div>
+        </header>
+
+        <div class="workspace">
+            <aside class="sidebar" aria-label="Canvas tools">
+                <div class="panel">
+                    <div class="group">
+                        <label class="label">Colors</label>
+                        <div class="color-palette" aria-label="Color palette">
+                            <div class="palette-row">
+                                <button class="swatch" style="--sw:#000000" data-color="#000000" title="Black"></button>
+                                <button class="swatch" style="--sw:#ffffff" data-color="#ffffff" title="White"></button>
+                                <button class="swatch" style="--sw:#ef4444" data-color="#ef4444" title="Red"></button>
+                                <button class="swatch" style="--sw:#f59e0b" data-color="#f59e0b" title="Orange"></button>
+                                <button class="swatch" style="--sw:#eab308" data-color="#eab308" title="Yellow"></button>
+                            </div>
+                            <div class="palette-row">
+                                <button class="swatch" style="--sw:#22c55e" data-color="#22c55e" title="Green"></button>
+                                <button class="swatch" style="--sw:#06b6d4" data-color="#06b6d4" title="Cyan"></button>
+                                <button class="swatch" style="--sw:#3b82f6" data-color="#3b82f6" title="Blue"></button>
+                                <button class="swatch" style="--sw:#8b5cf6" data-color="#8b5cf6" title="Purple"></button>
+                                <button class="swatch" style="--sw:#ec4899" data-color="#ec4899" title="Pink"></button>
+                            </div>
+                            <div class="palette-row">
+                                <button class="swatch" style="--sw:#6b7280" data-color="#6b7280" title="Gray"></button>
+                                <button class="swatch" style="--sw:#f97316" data-color="#f97316" title="Orange Red"></button>
+                                <button class="swatch" style="--sw:#84cc16" data-color="#84cc16" title="Lime"></button>
+                                <button class="swatch" style="--sw:#10b981" data-color="#10b981" title="Emerald"></button>
+                                <button class="swatch" style="--sw:#14b8a6" data-color="#14b8a6" title="Teal"></button>
+                            </div>
+                            <div class="palette-row">
+                                <button class="swatch" style="--sw:#0ea5e9" data-color="#0ea5e9" title="Sky Blue"></button>
+                                <button class="swatch" style="--sw:#6366f1" data-color="#6366f1" title="Indigo"></button>
+                                <button class="swatch" style="--sw:#a855f7" data-color="#a855f7" title="Violet"></button>
+                                <button class="swatch" style="--sw:#d946ef" data-color="#d946ef" title="Fuchsia"></button>
+                                <button class="swatch" style="--sw:#f43f5e" data-color="#f43f5e" title="Rose"></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="group">
+                        <label for="brushSize" class="label">Brush Size</label>
+                        <div class="brush-controls">
+                            <div class="range-container">
+                                <button id="sizeDec" class="size-btn" aria-label="Decrease size" title="Decrease">−</button>
+                                <input type="range" id="brushSize" min="1" max="50" value="5" aria-label="Brush size" />
+                                <button id="sizeInc" class="size-btn" aria-label="Increase size" title="Increase">+</button>
+                            </div>
+                            <div class="size-display"><span id="sizeValue" class="size-chip">5</span><span class="px">px</span></div>
+                        </div>
+                        <div class="quick-sizes">
+                            <button class="size-quick" data-size="2">2px</button>
+                            <button class="size-quick" data-size="5">5px</button>
+                            <button class="size-quick" data-size="10">10px</button>
+                            <button class="size-quick" data-size="20">20px</button>
+                            <button class="size-quick" data-size="35">35px</button>
+                        </div>
+                    </div>
+                    <div class="group">
+                        <button id="paintBucket" class="btn btn-secondary" title="Fill canvas background">🪣 Paint Bucket</button>
+                        <button id="clearCanvas" class="btn btn-danger" title="Clear for everyone">Clear Canvas</button>
+                    </div>
+                    <div class="group preview-card" aria-label="Brush preview">
+                        <div class="preview-row"><div id="brushPreviewCircle" class="preview-dot"></div><div class="preview-text">Live brush preview</div></div>
+                    </div>
+                    <div class="tips">
+                        <p>💡 <strong>Tip:</strong> Press and drag to draw. Change color and size on the fly.</p>
+                        <p>💬 <strong>Chat:</strong> Use the floating chat bubble on the right edge to open chat & users list. It shows a red badge when there are unread messages.</p>
+                    </div>
+                </div>
+            </aside>
+            <main class="canvas-area">
+                <div class="canvas-frame" id="canvasFrame">
+                    <div class="canvas-container">
+                        <div class="grid-bg"></div>
+                        <canvas id="drawingCanvas" width="2000" height="1200"></canvas>
+                    </div>
+                </div>
+                <div id="zoomIndicator" class="zoom-indicator">100%</div>
+            </main>
+        </div>
+
+        <button id="chatFloatingBtn" class="floating-chat-btn" title="Open Chat & Users" aria-controls="chatPopup" aria-expanded="false" style="display: none;">💬<span id="unreadBadge" class="unread-badge" style="display:none;">0</span></button>
+
+        <div id="chatPopup" class="chat-popup" style="display:none;" role="dialog" aria-modal="false" aria-label="Chat and Users">
+            <div class="chat-popup-header">
+                <div class="chat-popup-title">💬 Chat & Users</div>
+                <button id="closeChatPopup" class="close-btn" title="Close" aria-label="Close chat">×</button>
+            </div>
+            <div class="chat-popup-content">
+                <div class="chat-tabs">
+                    <button class="chat-tab-btn active" data-tab="chat">Chat</button>
+                    <button class="chat-tab-btn" data-tab="users">Users</button>
+                </div>
+                <div class="chat-content">
+                    <div id="chatTab" class="tab-panel active">
+                        <div id="chatMessages" class="chat-messages"></div>
+                        <div class="chat-input-row">
+                            <input id="chatInput" type="text" placeholder="Type a message..." maxlength="200" />
+                            <button id="sendMessage" class="send-btn" title="Send message" aria-label="Send message">→</button>
+                        </div>
+                    </div>
+                    <div id="usersTab" class="tab-panel"><div id="usersList" class="users-list"></div></div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer"><div class="info">Built by Kaine ❤️ | Draw together in real-time with WebRTC</div></footer>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
+                            <div class="range-container">
+                                <button id="sizeDec" class="size-btn" aria-label="Decrease size" title="Decrease">−</button>
+                                <input type="range" id="brushSize" min="1" max="50" value="5" aria-label="Brush size">
+                                <button id="sizeInc" class="size-btn" aria-label="Increase size" title="Increase">+</button>
+                            </div>
+                            <div class="size-display">
+                                <span id="sizeValue" class="size-chip">5</span>
+                                <span class="px">px</span>
+                            </div>
+                        </div>
+                        <div class="quick-sizes">
+                            <button class="size-quick" data-size="2">2px</button>
+                            <button class="size-quick" data-size="5">5px</button>
+                            <button class="size-quick" data-size="10">10px</button>
+                            <button class="size-quick" data-size="20">20px</button>
+                            <button class="size-quick" data-size="35">35px</button>
+                        </div>
+                    </div>
+
+                    <div class="group">
+                        <button id="paintBucket" class="btn btn-secondary" title="Fill canvas background">🪣 Paint Bucket</button>
+                        <button id="clearCanvas" class="btn btn-danger" title="Clear for everyone">Clear Canvas</button>
+                    </div>
+
+                    <div class="group preview-card" aria-label="Brush preview">
+                        <div class="preview-row">
+                            <div id="brushPreviewCircle" class="preview-dot"></div>
+                            <div class="preview-text">Live brush preview</div>
+                        </div>
+                    </div>
+
+                    <div class="tips">
+                        <p>💡 <strong>Tip:</strong> Press and drag to draw. Change color and size on the fly.</p>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="canvas-area">
+                <div class="canvas-frame" id="canvasFrame">
+                    <div class="canvas-container">
+                        <div class="grid-bg"></div>
+                        <canvas id="drawingCanvas" width="2000" height="1200"></canvas>
+                    </div>
+                </div>
+                <div id="zoomIndicator" class="zoom-indicator">100%</div>
+            </main>
+        </div>
+
+        <footer class="footer">
+            <div class="info">Built by Kaine ❤️ | Draw together in real-time with WebRTC</div>
+        </footer>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

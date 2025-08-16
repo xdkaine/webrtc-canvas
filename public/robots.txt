@@ -1,0 +1,20 @@
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://webrtc-canvas.vercel.app/sitemap.xml
+
+# Block crawling of dynamic API endpoints
+Disallow: /socket.io/
+Disallow: /api/
+
+# Allow static assets
+Allow: /style.css
+Allow: /script.js
+Allow: /*.png
+Allow: /*.jpg
+Allow: /*.svg
+Allow: /*.ico
+
+# Crawl delay (optional)
+Crawl-delay: 1
